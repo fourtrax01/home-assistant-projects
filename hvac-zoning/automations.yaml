@@ -1,0 +1,979 @@
+- id: '1790114057675'
+  alias: HVAC Vent Safety Watchdog
+  description: 'Fail-open backstop for anything outside the ESPHome firmware: opens
+    every vent if commissioning ends without cleaning up (script crash, HA restart
+    mid-test) or runs too long, and on HA start whenever zoning is not active. Also:
+    every 5 min, if zoning is active but the controller heartbeat is older than 5
+    min (controller broken/stuck), turns zoning off and opens all vents.'
+  triggers:
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+  - trigger: state
+    entity_id: script.hvac_commissioning_baseline
+    to: 'off'
+    id: script_ended
+  - trigger: state
+    entity_id: input_boolean.hvac_commissioning_running
+    to: 'on'
+    for:
+      minutes: 75
+    id: overrun
+  - trigger: time_pattern
+    minutes: /5
+    id: heartbeat
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: ha_start
+      sequence:
+      - delay:
+          seconds: 30
+      - if:
+        - condition: or
+          conditions:
+          - condition: state
+            entity_id: input_boolean.hvac_commissioning_running
+            state: 'on'
+          - condition: state
+            entity_id: input_boolean.hvac_zoning_active
+            state: 'off'
+        then:
+        - action: script.hvac_open_all_vents
+          data:
+            reason: Home Assistant started (zoning inactive or commissioning interrupted)
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.hvac_commissioning_running
+    - conditions:
+      - condition: trigger
+        id:
+        - script_ended
+        - overrun
+      - condition: state
+        entity_id: input_boolean.hvac_commissioning_running
+        state: 'on'
+      sequence:
+      - action: script.turn_off
+        target:
+          entity_id: script.hvac_commissioning_baseline
+      - action: script.hvac_open_all_vents
+        data:
+          reason: 'Watchdog: commissioning ended abnormally ({{ trigger.id }})'
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_commissioning_running
+      - action: persistent_notification.create
+        data:
+          notification_id: hvac_commissioning
+          title: HVAC Watchdog opened all vents
+          message: Commissioning ended without cleaning up ({{ trigger.id }}). All
+            vents commanded open. Check the logbook for the last completed step.
+    - conditions:
+      - condition: trigger
+        id: heartbeat
+      - condition: state
+        entity_id: input_boolean.hvac_zoning_active
+        state: 'on'
+      - condition: state
+        entity_id: input_boolean.hvac_commissioning_running
+        state: 'off'
+      - alias: Controller has not completed a run in 5+ minutes
+        condition: template
+        value_template: '{{ (now().timestamp() - (state_attr(''input_datetime.hvac_controller_heartbeat'',
+          ''timestamp'') | float(0))) > 300 }}'
+      - alias: HA has been up 5+ minutes (after a restart the heartbeat is restored
+          stale, so give the controller time to run first)
+        condition: template
+        value_template: '{{ (now().timestamp() - as_timestamp(states(''sensor.uptime''),
+          0)) > 300 }}'
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_zoning_active
+      - action: script.hvac_open_all_vents
+        data:
+          reason: 'Watchdog: zoning controller stopped responding'
+      - action: persistent_notification.create
+        data:
+          notification_id: hvac_zoning_watchdog
+          title: HVAC zoning controller stopped - vents opened
+          message: The zoning controller hasn't completed a run in over 5 minutes,
+            so the watchdog opened all vents and turned zoning off. Check the controller's
+            traces, then turn HVAC Zoning Active back on.
+  mode: queued
+  max: 5
+
+- id: '1790127231081'
+  alias: HVAC Commissioning - Auto-run Test Matrix
+  description: 'Each cooling cycle, after 4 min of confirmed cooling, runs the commissioning
+    script in ''matrix'' mode: fresh baseline, then every 0/50/100 vent combination
+    not yet in input_text.hvac_commissioning_done (mildest first, all-closed last).
+    The script turns this automation off when all 26 combinations are done.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.hvac_cooling_confirmed
+    to: 'on'
+    for:
+      minutes: 4
+  conditions:
+  - condition: state
+    entity_id: input_boolean.hvac_commissioning_running
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_zoning_active
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_vents_physically_installed
+    state: 'on'
+  - condition: state
+    entity_id: script.hvac_commissioning_baseline
+    state: 'off'
+  actions:
+  - action: script.turn_on
+    target:
+      entity_id: script.hvac_commissioning_baseline
+    data:
+      variables:
+        test_set: matrix
+  mode: single
+
+- id: '1790214233443'
+  alias: HVAC Kids Bath Cap (interim)
+  description: 'Interim until the zoning controller exists: keeps cover.kids_bath_vent
+    at or below input_number.kids_bath_vent_max_open while cooling/idle, and fully
+    open while heating. Stands aside during commissioning, safety override, when the
+    zoning controller is active, and for 30 min after script.hvac_open_all_vents runs
+    (so the emergency button is not immediately undone).'
+  triggers:
+  - trigger: homeassistant
+    event: start
+    id: start
+  - trigger: state
+    entity_id: cover.kids_bath_vent
+    attribute: current_position
+    for:
+      seconds: 30
+  - trigger: state
+    entity_id: input_number.kids_bath_vent_max_open
+  - trigger: state
+    entity_id: climate.upstairs_hk
+    attribute: hvac_action
+  - trigger: state
+    entity_id:
+    - input_boolean.hvac_commissioning_running
+    - input_boolean.hvac_safety_override
+    to: 'off'
+  - trigger: time_pattern
+    minutes: /15
+  conditions:
+  - condition: state
+    entity_id: input_boolean.hvac_commissioning_running
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_safety_override
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_zoning_active
+    state: 'off'
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: cover.kids_bath_vent
+      state:
+      - unavailable
+      - unknown
+  - alias: Open All Vents not used in the last 30 min
+    condition: template
+    value_template: '{% set t = state_attr(''script.hvac_open_all_vents'', ''last_triggered'')
+      %}{{ t is none or (now() - t).total_seconds() > 1800 }}'
+  actions:
+  - if:
+    - condition: trigger
+      id: start
+    then:
+    - delay:
+        seconds: 90
+      alias: Let the startup watchdog finish first
+  - choose:
+    - alias: 'Heating: bath fully open'
+      conditions:
+      - condition: state
+        entity_id: climate.upstairs_hk
+        attribute: hvac_action
+        state: heating
+      - condition: numeric_state
+        entity_id: cover.kids_bath_vent
+        attribute: current_position
+        below: 100
+      sequence:
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kids_bath_vent
+        data:
+          position: 100
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.kids_bath_vent_requested_position
+        data:
+          value: 100
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ now().strftime(''%H:%M'') }} BATH CAP: heating, kids bath opened
+            to 100%'
+    - alias: 'Not heating: enforce cap'
+      conditions:
+      - condition: not
+        conditions:
+        - condition: state
+          entity_id: climate.upstairs_hk
+          attribute: hvac_action
+          state: heating
+      - condition: numeric_state
+        entity_id: cover.kids_bath_vent
+        attribute: current_position
+        above: input_number.kids_bath_vent_max_open
+      sequence:
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kids_bath_vent
+        data:
+          position: '{{ states(''input_number.kids_bath_vent_max_open'') | int(100)
+            }}'
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.kids_bath_vent_requested_position
+        data:
+          value: '{{ states(''input_number.kids_bath_vent_max_open'') | int(100) }}'
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ now().strftime(''%H:%M'') }} BATH CAP: kids bath set to {{ states(''input_number.kids_bath_vent_max_open'')
+            | int }}% (max open)'
+  mode: queued
+  max: 3
+
+- id: '1790215615440'
+  alias: HVAC Zoning Controller
+  description: 'Central upstairs zoning controller. Runs every minute and on key changes
+    while input_boolean.hvac_zoning_active is ON. Decision logic lives in custom_templates/hvac_zoning.jinja
+    (macro hvac_plan): safety (sensor failure / pressure / coil) > recovery hold >
+    heating (all open) > idle (hold, then neutral) > master priority (input_boolean.hvac_day_sleep
+    on and evening mode off: bath shut, kids shut until master + allowance, staged:
+    bath closed -> cooler kid throttled -> both kids) > kids east/west balance with
+    bath at cap. Anti-hunting: closing moves need the vent''s dwell time; opening
+    moves are always allowed. All limits are input_number helpers on the HVAC Zoning
+    dashboard. Fan balancing (input_boolean.hvac_fan_balance_running, AC idle): kids
+    vents open to at least input_number.hvac_fan_balance_min_open.'
+  triggers:
+  - trigger: time_pattern
+    minutes: /1
+  - trigger: state
+    entity_id:
+    - switch.my_bed
+    - binary_sensor.hvac_cooling_confirmed
+    - input_boolean.hvac_day_sleep
+    - input_boolean.hvac_evening_mode
+    - input_boolean.hvac_fan_balance_running
+  - trigger: state
+    entity_id: climate.upstairs_hk
+    attribute: hvac_action
+  - trigger: state
+    entity_id: input_boolean.hvac_zoning_active
+    to: 'on'
+  - trigger: numeric_state
+    entity_id: sensor.hvac_duct_pressure_30s_average
+    above: input_number.hvac_pressure_hard_limit
+  - trigger: state
+    entity_id:
+    - cover.kids_bath_vent
+    - cover.kid2_vent
+    - cover.kid1_vent
+    - sensor.hvac_duct_pressure
+    - sensor.delta_tango_hvac_supply_air_temp
+    - sensor.delta_tango_hvac_return_air_temp
+    - climate.upstairs_hk
+    to:
+    - unavailable
+    - unknown
+  conditions:
+  - condition: state
+    entity_id: input_boolean.hvac_zoning_active
+    state: 'on'
+  - condition: state
+    entity_id: input_boolean.hvac_commissioning_running
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_vents_physically_installed
+    state: 'on'
+  actions:
+  - variables:
+      plan: '{% from ''hvac_zoning.jinja'' import hvac_plan %}{{ hvac_plan() | from_json
+        }}'
+      dwell: '{{ states(''input_number.hvac_vent_dwell_minutes'') | float(15) }}'
+  - alias: Track master-priority stage
+    if:
+    - condition: template
+      value_template: '{{ plan.stage != states(''input_number.hvac_priority_stage'')
+        | int(0) }}'
+    then:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.hvac_priority_stage
+      data:
+        value: '{{ plan.stage }}'
+  - alias: Apply vent targets (closing waits for dwell, opening always allowed)
+    repeat:
+      for_each:
+      - cover: cover.kids_bath_vent
+        req: input_number.kids_bath_vent_requested_position
+        key: kb
+      - cover: cover.kid2_vent
+        req: input_number.kid2_vent_requested_position
+        key: ai
+      - cover: cover.kid1_vent
+        req: input_number.kid1_vent_requested_position
+        key: av
+      sequence:
+      - variables:
+          tgt: '{{ plan[repeat.item.key] | int }}'
+          cur: '{{ states(repeat.item.req) | int(100) }}'
+          age: '{{ (now() - states[repeat.item.req].last_changed).total_seconds()
+            / 60 }}'
+          pos: '{{ state_attr(repeat.item.cover, ''current_position'') | int(-1) }}'
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: '{{ tgt != cur and (plan.safety or tgt > cur or age >=
+              dwell) }}'
+          sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: '{{ repeat.item.req }}'
+            data:
+              value: '{{ tgt }}'
+          - action: cover.set_cover_position
+            target:
+              entity_id: '{{ repeat.item.cover }}'
+            data:
+              position: '{{ tgt }}'
+            continue_on_error: true
+        - alias: Re-assert if the vent drifted (e.g. firmware fail-open after an outage)
+          conditions:
+          - condition: template
+            value_template: '{{ tgt == cur and pos >= 0 and (pos - cur) | abs > 5
+              and age >= 2 }}'
+          sequence:
+          - action: cover.set_cover_position
+            target:
+              entity_id: '{{ repeat.item.cover }}'
+            data:
+              position: '{{ cur }}'
+            continue_on_error: true
+  - alias: Safety override bookkeeping
+    choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ plan.safety and not plan.recovering }}'
+      sequence:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.hvac_safety_override
+      - if:
+        - condition: template
+          value_template: '{{ states(''input_text.hvac_safety_override_reason'') !=
+            plan.reason[:255] }}'
+        then:
+        - action: input_text.set_value
+          target:
+            entity_id: input_text.hvac_safety_override_reason
+          data:
+            value: '{{ plan.reason[:255] }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ plan.recovering and not states(''input_text.hvac_safety_override_reason'').startswith(''Recovering'')
+          }}'
+      sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_safety_override_reason
+        data:
+          value: '{{ plan.reason[:255] }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ plan[''clear''] }}'
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_safety_override
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_safety_override_reason
+        data:
+          value: clear
+  - if:
+    - condition: template
+      value_template: '{{ states(''input_select.hvac_zoning_state'') != plan.state
+        }}'
+    then:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.hvac_zoning_state
+      data:
+        option: '{{ plan.state }}'
+  - if:
+    - condition: template
+      value_template: '{{ states(''input_select.hvac_requested_zone'') != plan.zone
+        }}'
+    then:
+    - action: input_select.select_option
+      target:
+        entity_id: input_select.hvac_requested_zone
+      data:
+        option: '{{ plan.zone }}'
+  - alias: Log only when the decision itself changes
+    variables:
+      key: '{{ plan.state }} {{ plan.zone }} bath/kid2/kid1 {{ plan.kb }}/{{ plan.ai
+        }}/{{ plan.av }}'
+  - if:
+    - condition: template
+      value_template: '{{ key not in states(''input_text.hvac_last_decision'') }}'
+    then:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.hvac_last_decision
+      data:
+        value: '{{ (now().strftime(''%H:%M'') ~ '' '' ~ key ~ '' - '' ~ plan.reason)[:255]
+          }}'
+    - action: logbook.log
+      data:
+        name: HVAC Zoning
+        message: '{{ key }} - {{ plan.reason }}'
+        entity_id: input_text.hvac_last_decision
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.hvac_controller_heartbeat
+    data:
+      timestamp: '{{ now().timestamp() }}'
+  mode: single
+  max_exceeded: silent
+
+- id: '1790215700449'
+  alias: HVAC Zoning Disabled - Open Vents
+  description: When input_boolean.hvac_zoning_active is turned off, command every
+    vent open, clear the safety override, and mark the controller DISABLED. The interim
+    kids-bath cap automation re-applies the bath cap 30 min later.
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.hvac_zoning_active
+    from: 'on'
+    to: 'off'
+  conditions:
+  - condition: state
+    entity_id: input_boolean.hvac_commissioning_running
+    state: 'off'
+  actions:
+  - action: script.hvac_open_all_vents
+    data:
+      reason: Zoning controller disabled
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.hvac_safety_override
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.hvac_safety_override_reason
+    data:
+      value: clear
+  - action: input_number.set_value
+    target:
+      entity_id: input_number.hvac_priority_stage
+    data:
+      value: 0
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.hvac_zoning_state
+    data:
+      option: DISABLED
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.hvac_requested_zone
+    data:
+      option: NONE
+  mode: single
+
+- id: '1790299232095'
+  alias: HVAC Cooling Rate Logger
+  description: 'Learning data for vent positions: measures how fast each room cools
+    during each segment of a cooling cycle at fixed vent positions. A segment opens
+    3 min after cooling is confirmed and closes when cooling stops or any vent''s
+    requested position changes (a new segment then opens). Segments of 6-90 min are
+    written to input_text.hvac_cooling_segment_last (its history is the dataset, 30-day
+    recorder) and the logbook as pipe-separated fields: start | minutes | pos bath/kid2/kid1
+    % | kid2 rate | kid1 rate | master rate | start temps kid2/kid1/master | supply
+    2-min avg F | outdoor F | doors open (a/v/m) | zoning state. Rates are F dropped
+    per 10 min (positive = cooling). Plain text on purpose: a JSON string would be
+    parsed into a dict by HA''s native template types.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.hvac_cooling_confirmed
+    to: 'on'
+    for:
+      minutes: 3
+    id: start
+  - trigger: state
+    entity_id: binary_sensor.hvac_cooling_confirmed
+    from: 'on'
+    id: stop
+  - trigger: state
+    entity_id:
+    - input_number.kids_bath_vent_requested_position
+    - input_number.kid2_vent_requested_position
+    - input_number.kid1_vent_requested_position
+    not_from:
+    - unavailable
+    - unknown
+    not_to:
+    - unavailable
+    - unknown
+    id: move
+  conditions: []
+  actions:
+  - variables:
+      now_ts: '{{ now().timestamp() | int }}'
+      seg: '{{ states(''input_text.hvac_cooling_segment_open'') }}'
+      snap: '{{ now().timestamp() | int }}|{{ states(''sensor.kid2_temp_hk'') }},{{
+        states(''sensor.kid1_temp_hk'') }},{{ states(''sensor.master_temp_hk'') }}|{{
+        states(''input_number.kids_bath_vent_requested_position'') | int }},{{ states(''input_number.kid2_vent_requested_position'')
+        | int }},{{ states(''input_number.kid1_vent_requested_position'') | int }}'
+  - alias: Close the open segment
+    if:
+    - condition: template
+      value_template: '{{ trigger.id in [''stop'', ''move''] and seg.count(''|'')
+        == 2 }}'
+    then:
+    - variables:
+        cycle_ts: '{{ (trigger.from_state.last_changed if trigger.id == ''stop'' else
+          states.binary_sensor.hvac_cooling_confirmed.last_changed).timestamp() |
+          int }}'
+        live: '{{ trigger.id == ''stop'' or is_state(''binary_sensor.hvac_cooling_confirmed'',
+          ''on'') }}'
+      alias: Only close a segment that belongs to the current cooling cycle (09-25
+        a stale 12:37 segment survived a restart and was logged again at 13:22 as
+        45 min with supply 78.8F)
+    - variables:
+        row: '{% set p = seg.split(''|'') %}{% set t0 = p[0] | int(0) %}{% set a =
+          p[1].split('','') %}{% set b = [states(''sensor.kid2_temp_hk''), states(''sensor.kid1_temp_hk''),
+          states(''sensor.master_temp_hk'')] %}{% set dur = (now_ts - t0) / 60 %}{%
+          if live and t0 >= cycle_ts - 60 and 6 <= dur <= 90 and (a + b) | select(''is_number'')
+          | list | count == 6 %}{% set r = namespace(v=[]) %}{% for i in range(3)
+          %}{% set r.v = r.v + [((a[i] | float - b[i] | float) / dur * 10) | round(2)]
+          %}{% endfor %}{{ as_datetime(t0).astimezone().strftime(''%m-%d %H:%M'')
+          }} | {{ dur | round(1) }} | {{ p[2] | replace('','', ''/'') }} | {{ r.v
+          | join('' | '') }} | {{ a | map(''float'') | map(''round'', 1) | join(''/'')
+          }} | {{ states(''sensor.hvac_supply_temp_2_min_average'') | float(0) | round(1)
+          }} | {{ state_attr(''weather.forecast_home'', ''temperature'') }} | {{ (''a''
+          if is_state(''binary_sensor.kid2_door'', ''on'') else '''') ~ (''v'' if
+          is_state(''binary_sensor.kid1_door'', ''on'') else '''') ~ (''m'' if is_state(''binary_sensor.master_door'',
+          ''on'') else '''') or ''-'' }} | {{ states(''input_select.hvac_zoning_state'')
+          }}{% endif %}'
+    - if:
+      - condition: template
+        value_template: '{{ row | string | length > 0 }}'
+      then:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_cooling_segment_last
+        data:
+          value: '{{ row[:255] }}'
+      - action: logbook.log
+        data:
+          name: HVAC Cooling Rate
+          message: '{{ row }}'
+          entity_id: input_text.hvac_cooling_segment_last
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.hvac_cooling_segment_open
+      data:
+        value: ''
+  - alias: Open a new segment
+    if:
+    - condition: template
+      value_template: '{{ trigger.id == ''start'' or (trigger.id == ''move'' and is_state(''binary_sensor.hvac_cooling_confirmed'',
+        ''on'') and (now() - states.binary_sensor.hvac_cooling_confirmed.last_changed).total_seconds()
+        >= 180) }}'
+    then:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.hvac_cooling_segment_open
+      data:
+        value: '{{ snap }}'
+  mode: queued
+  max: 5
+
+- id: '1790301022866'
+  alias: HVAC Evening Handoff
+  description: 'Gets the kids'' rooms comfortable before their 8:30 PM bedtime. At
+    input_datetime.hvac_evening_start (6 PM), or from input_datetime.hvac_evening_early_start
+    (5 PM) if either kid room is input_number.hvac_evening_early_start_gap (3F) or
+    more warmer than the master: turns on input_boolean.hvac_evening_mode (the zoning
+    controller then skips master priority) and, if the upstairs Ecobee is in Day Sleep
+    or Home, switches it to Sleep (74F, Master+Kid 2+Kid 1 sensors). Not resume_program:
+    the schedule''s Home is 76F, warmer than Day Sleep''s 74F, which would stop cooling
+    right when the kids need it. The Sleep hold ends at the 8 PM schedule change,
+    which goes to Sleep anyway. Away presets and manual temperature holds are left
+    alone. Also clears input_boolean.hvac_day_sleep (ends master priority). Evening
+    mode resets at 05:00 (clock time; the user''s sleep can be at any time, but day
+    sleep usually starts 9-10 AM after 6 AM shifts). While evening mode is off, a
+    bed-on counts as day sleep (Day Sleep preset + hvac_day_sleep).'
+  triggers:
+  - trigger: time
+    at: input_datetime.hvac_evening_start
+    id: start
+  - trigger: time_pattern
+    minutes: /5
+    id: early_check
+  - trigger: time
+    at: 05:00:00
+    id: reset
+  - trigger: state
+    entity_id: climate.upstairs
+    attribute: preset_mode
+    to: home
+    id: preset_home
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: reset
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_evening_mode
+    - alias: Keep Sleep until the 8 PM schedule change (2026-09-25 the Ecobee dropped
+        the Sleep hold for Home 76F a minute after the bed turned off)
+      conditions:
+      - condition: trigger
+        id:
+        - preset_home
+        - early_check
+      - condition: state
+        entity_id: input_boolean.hvac_evening_mode
+        state: 'on'
+      - condition: time
+        after: '12:00:00'
+        before: '20:00:00'
+      - condition: state
+        entity_id: climate.upstairs
+        attribute: preset_mode
+        state: home
+      sequence:
+      - action: climate.set_preset_mode
+        target:
+          entity_id: climate.upstairs
+        data:
+          preset_mode: sleep
+      - action: logbook.log
+        data:
+          name: HVAC Evening Handoff
+          message: Ecobee went to Home during evening mode - set back to Sleep
+          entity_id: input_boolean.hvac_evening_mode
+    - conditions:
+      - condition: state
+        entity_id: input_boolean.hvac_evening_mode
+        state: 'off'
+      - condition: or
+        conditions:
+        - condition: trigger
+          id: start
+        - condition: and
+          conditions:
+          - condition: trigger
+            id: early_check
+          - condition: time
+            after: input_datetime.hvac_evening_early_start
+            before: input_datetime.hvac_evening_start
+          - condition: template
+            value_template: '{% set m = states(''sensor.master_temp_hk'') %}{% set
+              k = [states(''sensor.kid2_temp_hk''), states(''sensor.kid1_temp_hk'')]
+              | select(''is_number'') | map(''float'') | list %}{{ is_number(m) and
+              k | count > 0 and (k | max) - (m | float) >= states(''input_number.hvac_evening_early_start_gap'')
+              | float(3) }}'
+      sequence:
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.hvac_evening_mode
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_day_sleep
+      - alias: Switch to Sleep (74F, Master+Kid 2+Kid 1) unless away or a manual hold
+        if:
+        - condition: state
+          entity_id: climate.upstairs
+          attribute: preset_mode
+          state:
+          - Day Sleep
+          - home
+        then:
+        - action: climate.set_preset_mode
+          target:
+            entity_id: climate.upstairs
+          data:
+            preset_mode: sleep
+      - action: logbook.log
+        data:
+          name: HVAC Evening Handoff
+          message: '{{ ''Evening mode on ('' ~ (''scheduled'' if trigger.id == ''start''
+            else ''early: a kid room is '' ~ states(''input_number.hvac_evening_early_start_gap'')
+            ~ ''F+ over the master'') ~ '') - Kid 2 '' ~ states(''sensor.kid2_temp_hk'')
+            ~ ''F, Kid 1 '' ~ states(''sensor.kid1_temp_hk'') ~ ''F, master '' ~
+            states(''sensor.master_temp_hk'') ~ ''F'' }}'
+          entity_id: input_boolean.hvac_evening_mode
+  mode: single
+
+- id: '1790876119281'
+  alias: HVAC Commissioning - Auto-run Post-ECM Retest
+  description: 'Each cooling cycle, after 4 min of confirmed cooling, runs the commissioning
+    script in ''retest'' mode: fresh baseline, then every retest step not yet in input_text.hvac_retest_done
+    (each vent alone at 20/15/10/5/0%, then all 20, bath 0 + kids 20, bath 0 + 20/5,
+    bath 0 + 5/20, all closed). The script turns this automation off when all 20 are
+    done. Needs zoning OFF.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.hvac_cooling_confirmed
+    to: 'on'
+    for:
+      minutes: 4
+  conditions:
+  - condition: state
+    entity_id: input_boolean.hvac_commissioning_running
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_zoning_active
+    state: 'off'
+  - condition: state
+    entity_id: input_boolean.hvac_vents_physically_installed
+    state: 'on'
+  - condition: state
+    entity_id: script.hvac_commissioning_baseline
+    state: 'off'
+  actions:
+  - action: script.turn_on
+    target:
+      entity_id: script.hvac_commissioning_baseline
+    data:
+      variables:
+        test_set: retest
+  mode: single
+
+- id: '1790967661719'
+  alias: HVAC Filter Change Alert
+  description: 'Phone alert when the upstairs return filter''s pressure drop stays
+    above input_number.hvac_filter_change_threshold for 15 min of steady cooling.
+    At most once per 7 days. Baseline: MERV 11 read ~0.15 inH2O on 2026-10-02 (2 months
+    old); a MERV 8 will start lower, so lower the threshold after a changeout if needed.'
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.delta_t_pressure_node_ac_filter_pressure_drop
+    above: input_number.hvac_filter_change_threshold
+    for:
+      minutes: 15
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.hvac_cooling_confirmed
+    state: 'on'
+    for:
+      minutes: 20
+  - alias: Not already alerted in the last 7 days
+    condition: template
+    value_template: '{{ this.attributes.last_triggered is none or now() - this.attributes.last_triggered
+      > timedelta(days=7) }}'
+  actions:
+  - action: notify.mobile_app_parent1_phone
+    data:
+      title: Upstairs AC filter is loading up
+      message: Filter pressure drop has been {{ states('sensor.delta_t_pressure_node_ac_filter_pressure_drop')
+        | float(0) | round(3) }} inH₂O for 15+ min of cooling (threshold {{ states('input_number.hvac_filter_change_threshold')
+        }}). Plan a filter change; change it now if it's above 0.4.
+  mode: single
+
+- id: '1791404849606'
+  alias: HVAC Fan Circulation Balance
+  description: 'Upstairs only. When the AC has been idle for 30+ min (binary_sensor.hvac_cooling_confirmed
+    off; 2026-10-09 - runs squeezed between cooling cycles never balanced anything)
+    and the bedrooms drift apart (sensor.hvac_bedroom_temp_spread = warmest minus
+    coolest of master/Kid 2/Kid 1 >= input_number.hvac_fan_balance_start_spread),
+    run the blower (climate.upstairs_hk fan_mode on, low speed) to mix the air. Stops
+    (fan back to auto) when the spread is under 1.0 F, after 45 min, when the AC starts
+    cooling/heating, when disabled, or when the ducts ADD heat (delta-T 2-min avg
+    below -1.5 F after 5 min = supply warmer than return, e.g. hot attic ducts) -
+    that last case locks out for 2 h. Normal stops start a 20-min cooldown (timer.hvac_fan_balance_lockout).
+    Only resets the fan it turned on itself (input_boolean.hvac_fan_balance_running).
+    Master switch: input_boolean.hvac_fan_balance_enabled. Attic above 115 F = never
+    start. Also stops after 5 min if the supply 2-min avg is warmer than the bedroom
+    mean (sensor.hvac_bedroom_temp_mean) - the return picks up attic heat (return
+    tracks attic temp, r=0.97) - and locks out 1 h (2026-10-09).'
+  triggers:
+  - trigger: time_pattern
+    minutes: /2
+    id: tick
+  - trigger: state
+    entity_id: climate.upstairs_hk
+    attribute: hvac_action
+    id: hvac_action
+  - trigger: state
+    entity_id: input_boolean.hvac_fan_balance_enabled
+    to: 'off'
+    id: disabled
+  conditions: []
+  actions:
+  - choose:
+    - alias: 'Stop: the ducts are adding heat - fan back to auto, lock out 2 h'
+      conditions:
+      - condition: state
+        entity_id: input_boolean.hvac_fan_balance_running
+        state: 'on'
+        for:
+          minutes: 5
+      - condition: numeric_state
+        entity_id: sensor.hvac_delta_t_2_min_average
+        below: -1.5
+      sequence:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: climate.upstairs_hk
+        data:
+          fan_mode: auto
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_fan_balance_running
+      - action: timer.start
+        target:
+          entity_id: timer.hvac_fan_balance_lockout
+        data:
+          duration: 02:00:00
+    - alias: 'Stop: supply air warmer than the bedrooms (attic heat in the return)
+        - fan back to auto, lock out 1 h'
+      conditions:
+      - condition: state
+        entity_id: input_boolean.hvac_fan_balance_running
+        state: 'on'
+        for:
+          minutes: 5
+      - condition: numeric_state
+        entity_id: sensor.hvac_supply_temp_2_min_average
+        above: sensor.hvac_bedroom_temp_mean
+      sequence:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: climate.upstairs_hk
+        data:
+          fan_mode: auto
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_fan_balance_running
+      - action: timer.start
+        target:
+          entity_id: timer.hvac_fan_balance_lockout
+        data:
+          duration: 01:00:00
+    - alias: 'Stop: balanced, timed out, AC started, disabled, or fan changed by someone
+        else'
+      conditions:
+      - condition: state
+        entity_id: input_boolean.hvac_fan_balance_running
+        state: 'on'
+      - condition: or
+        conditions:
+        - condition: numeric_state
+          entity_id: sensor.hvac_bedroom_temp_spread
+          below: 1
+        - condition: state
+          entity_id: input_boolean.hvac_fan_balance_running
+          state: 'on'
+          for:
+            minutes: 45
+        - condition: state
+          entity_id: climate.upstairs_hk
+          attribute: hvac_action
+          state:
+          - cooling
+          - heating
+        - condition: state
+          entity_id: input_boolean.hvac_fan_balance_enabled
+          state: 'off'
+        - condition: state
+          entity_id: climate.upstairs_hk
+          attribute: fan_mode
+          state: auto
+      sequence:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: climate.upstairs_hk
+        data:
+          fan_mode: auto
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hvac_fan_balance_running
+      - action: timer.start
+        target:
+          entity_id: timer.hvac_fan_balance_lockout
+        data:
+          duration: 00:20:00
+    - alias: 'Start: AC idle and bedrooms drifted apart - run the blower'
+      conditions:
+      - condition: trigger
+        id: tick
+      - condition: state
+        entity_id: input_boolean.hvac_fan_balance_running
+        state: 'off'
+      - condition: state
+        entity_id: input_boolean.hvac_fan_balance_enabled
+        state: 'on'
+      - condition: state
+        entity_id: timer.hvac_fan_balance_lockout
+        state: idle
+      - condition: state
+        entity_id: climate.upstairs_hk
+        state:
+        - heat_cool
+        - cool
+        - heat
+        - auto
+      - condition: state
+        entity_id: climate.upstairs_hk
+        attribute: hvac_action
+        state: idle
+      - alias: 'AC idle 30+ min (2026-10-09: short gaps between cooling cycles did
+          not even out the rooms)'
+        condition: state
+        entity_id: binary_sensor.hvac_cooling_confirmed
+        state: 'off'
+        for:
+          minutes: 30
+      - condition: state
+        entity_id: climate.upstairs_hk
+        attribute: fan_mode
+        state: auto
+      - condition: numeric_state
+        entity_id: sensor.hvac_bedroom_temp_spread
+        above: input_number.hvac_fan_balance_start_spread
+      - condition: numeric_state
+        entity_id: sensor.delta_t_pressure_node_attic_temp
+        below: 115
+      sequence:
+      - action: climate.set_fan_mode
+        target:
+          entity_id: climate.upstairs_hk
+        data:
+          fan_mode: 'on'
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.hvac_fan_balance_running
+  mode: single
+

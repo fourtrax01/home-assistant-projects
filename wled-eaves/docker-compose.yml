@@ -1,0 +1,32 @@
+# WLED -> Govee H7076 porch bridge. Runs on a NAS or any always-on Linux box with Docker.
+# Host networking is required: the bridge receives WLED's DDP on UDP 4048 and sends to the
+# lights on UDP 4003. It has no published ports, so it is only reachable on your LAN.
+# Do NOT port-forward 8790 or 4048 on your router.
+services:
+  wled-govee-bridge:
+    image: python:3.12-alpine
+    container_name: wled-govee-bridge
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    user: "65534:65534"          # run as nobody; the bridge needs no file or root access
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    volumes:
+      - ./bridge.py:/app/bridge.py:ro
+    command: ["python3", "-u", "/app/bridge.py"]
+    environment:
+      # Light IPs in strip order (left to right as seen from the street):
+      # Porch, Walk/Porch, Walkway, Left, Center, Right
+      GOVEE_IPS: "192.168.1.51,192.168.1.52,192.168.1.53,192.168.1.54,192.168.1.55,192.168.1.56"
+      PIXELS: "10"   # per light in the WLED ledmap (36 = raw beads)
+      DDP_PORT: "4048"
+      HTTP_PORT: "8790"
+      MAX_FPS: "25"
+      ENABLED: "0"
+      FLOOR_PCT: "30"  # porch glow between effects (0 = off)
+      # --- access control (see README) ---
+      BIND_HOST: "0.0.0.0"                       # or this host's LAN IP, e.g. 192.168.1.20
+      ALLOW_FROM: "192.168.1.10,192.168.1.70"    # your Home Assistant IP, your WLED IP
+      # BRIDGE_TOKEN: "change-me-long-random"     # optional; HA must then send X-Bridge-Token

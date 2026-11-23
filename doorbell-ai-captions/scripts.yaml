@@ -1,0 +1,110 @@
+doorbell_tv_popup:
+  alias: Doorbell TV Popup
+  description: Live front door video on all 4 TVs (TvOverlay). Opens the front door
+    popup FIRST, then closes any driveway popup, so there is no blank gap. Called
+    in the background by Doorbell Notifications (10-25).
+  mode: restart
+  fields:
+    title:
+      description: Popup title
+      example: Front Door
+  sequence:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.doorbell_tv_last_shown
+    data:
+      timestamp: '{{ as_timestamp(now()) }}'
+  - parallel:
+    - action: rest_command.tvoverlay_notify
+      continue_on_error: true
+      data:
+        host: 192.168.1.81
+        port: 5001
+        id: tv_door
+        title: '{{ title | default(''Front Door'') }}'
+        video: rtsp://192.168.1.84:8554/front_door_2
+        corner: bottom_end
+        duration: 30
+        notificationLayoutName: Default
+    - action: rest_command.tvoverlay_notify
+      continue_on_error: true
+      data:
+        host: 192.168.1.82
+        port: 5001
+        id: tv_door
+        title: '{{ title | default(''Front Door'') }}'
+        video: rtsp://192.168.1.84:8554/front_door_2
+        corner: bottom_end
+        duration: 30
+        notificationLayoutName: Default
+    - action: rest_command.tvoverlay_notify
+      continue_on_error: true
+      data:
+        host: 192.168.1.83
+        port: 5001
+        id: tv_door
+        title: '{{ title | default(''Front Door'') }}'
+        video: rtsp://192.168.1.84:8554/front_door_2
+        corner: bottom_end
+        duration: 30
+        notificationLayoutName: Default
+    - action: rest_command.tvoverlay_notify
+      continue_on_error: true
+      data:
+        host: 192.168.1.85
+        port: 5001
+        id: tv_door
+        title: '{{ title | default(''Front Door'') }}'
+        video: rtsp://192.168.1.84:8554/front_door_2
+        corner: bottom_end
+        duration: 30
+        notificationLayoutName: New Default
+  - if:
+    - condition: template
+      value_template: '{{ (now() - (state_attr(''automation.driveway_person_tv_live_video'',''last_triggered'')
+        or (now() - timedelta(hours=1)))).total_seconds() < 40 }}'
+    then:
+    - delay:
+        seconds: 2
+    - parallel:
+      - action: rest_command.tvoverlay_notify
+        continue_on_error: true
+        data:
+          host: 192.168.1.81
+          port: 5001
+          id: tv_drive
+          title: Driveway
+          corner: bottom_end
+          duration: 1
+          notificationLayoutName: Default
+      - action: rest_command.tvoverlay_notify
+        continue_on_error: true
+        data:
+          host: 192.168.1.82
+          port: 5001
+          id: tv_drive
+          title: Driveway
+          corner: bottom_end
+          duration: 1
+          notificationLayoutName: Default
+      - action: rest_command.tvoverlay_notify
+        continue_on_error: true
+        data:
+          host: 192.168.1.83
+          port: 5001
+          id: tv_drive
+          title: Driveway
+          corner: bottom_end
+          duration: 1
+          notificationLayoutName: Default
+      - action: rest_command.tvoverlay_notify
+        continue_on_error: true
+        data:
+          host: 192.168.1.85
+          port: 5001
+          id: tv_drive
+          title: Driveway
+          corner: bottom_end
+          duration: 1
+          notificationLayoutName: New Default
+

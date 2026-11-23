@@ -1,0 +1,675 @@
+hvac_commissioning_baseline:
+  alias: HVAC Commissioning - Baseline & Vent Test
+  icon: mdi:progress-wrench
+  description: 'Measures duct pressure and coil temperatures with all vents open (3
+    min baseline, starts after 3 min of confirmed cooling - supply air settles within
+    ~4 min of blower start), then runs vent tests (3 min hold + 2 min recovery each).
+    Modes: full, final_combo, matrix and retest (both resumable across cooling cycles).
+    Monitors continuously and forces all vents open on any abort condition. TEST-ONLY
+    abort limits: pressure >30% above baseline or >250 Pa, supply <40F, delta-T >35F,
+    any safety sensor or vent unavailable, cooling stops. Sets the baseline helper
+    but no permanent zoning thresholds.'
+  mode: single
+  variables:
+    results: []
+    all_steps:
+    - name: Baseline - all open
+      kind: baseline
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 180
+    - name: Kids bath closed
+      kind: test
+      kb: 0
+      ai: 100
+      av: 100
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Kid 2 closed
+      kind: test
+      kb: 100
+      ai: 0
+      av: 100
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Kid 1 closed
+      kind: test
+      kb: 100
+      ai: 100
+      av: 0
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Kid 2 50%
+      kind: test
+      kb: 100
+      ai: 50
+      av: 100
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Kid 1 50%
+      kind: test
+      kb: 100
+      ai: 100
+      av: 50
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Bath + Kid 2 closed
+      kind: test
+      kb: 0
+      ai: 0
+      av: 100
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Bath + Kid 1 closed
+      kind: test
+      kb: 0
+      ai: 100
+      av: 0
+      hold: 180
+    - name: Recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    - name: Bath closed, kids 50%
+      kind: test
+      kb: 0
+      ai: 50
+      av: 50
+      hold: 180
+    - name: Final recovery
+      kind: recovery
+      kb: 100
+      ai: 100
+      av: 100
+      hold: 120
+    steps: '{% set mode = test_set | default(''full'') %}{% if mode == ''final_combo''
+      %}{{ [all_steps[0], all_steps[15], all_steps[16]] }}{% elif mode == ''matrix''
+      %}{% set done = states(''input_text.hvac_commissioning_done'').split('','')
+      %}{% set pos = {''0'': 0, ''f'': 5, ''t'': 10, ''2'': 25, ''5'': 50, ''1'':
+      100} %}{% set cl = {''0'': 2, ''f'': 1.9, ''t'': 1.8, ''2'': 1.5, ''5'': 1,
+      ''1'': 0} %}{% set ns = namespace(t=[]) %}{% for a in ''051'' %}{% for b in
+      ''051'' %}{% for c in ''051'' %}{% set code = a ~ b ~ c %}{% if code != ''111''
+      and code not in done %}{% set ns.t = ns.t + [{''code'': code, ''score'': cl[a]
+      + cl[b] + cl[c], ''kb'': pos[a], ''ai'': pos[b], ''av'': pos[c]}] %}{% endif
+      %}{% endfor %}{% endfor %}{% endfor %}{% for code in [''211'',''121'',''112'',''021'',''012'',''022'',''t11'',''1t1'',''11t'',''f11'',''1f1'',''11f'']
+      %}{% if code not in done %}{% set ns.t = ns.t + [{''code'': code, ''score'':
+      cl[code[0]] + cl[code[1]] + cl[code[2]], ''kb'': pos[code[0]], ''ai'': pos[code[1]],
+      ''av'': pos[code[2]]}] %}{% endif %}{% endfor %}{% set ns2 = namespace(s=[all_steps[0]])
+      %}{% for t in ns.t | sort(attribute=''score'') %}{% set ns2.s = ns2.s + [{''name'':
+      ''Bath '' ~ t.kb ~ '' / Kid 2 '' ~ t.ai ~ '' / Kid 1 '' ~ t.av, ''kind'': ''test'',
+      ''code'': t.code, ''kb'': t.kb, ''ai'': t.ai, ''av'': t.av, ''hold'': 180},
+      {''name'': ''Recovery'', ''kind'': ''recovery'', ''kb'': 100, ''ai'': 100, ''av'':
+      100, ''hold'': 120}] %}{% endfor %}{{ ns2.s }}{% elif mode == ''retest'' %}{%
+      set done = states(''input_text.hvac_retest_done'').split('','') %}{% set pos
+      = {''0'': 0, ''f'': 5, ''t'': 10, ''q'': 15, ''w'': 20, ''1'': 100} %}{% set
+      cl = {''0'': 2, ''f'': 1.9, ''t'': 1.8, ''q'': 1.7, ''w'': 1.6, ''1'': 0} %}{%
+      set ns = namespace(t=[]) %}{% for p in ''wqtf0'' %}{% for code in [p ~ ''11'',
+      ''1'' ~ p ~ ''1'', ''11'' ~ p] %}{% if code not in done %}{% set ns.t = ns.t
+      + [{''code'': code, ''score'': cl[code[0]] + cl[code[1]] + cl[code[2]], ''kb'':
+      pos[code[0]], ''ai'': pos[code[1]], ''av'': pos[code[2]]}] %}{% endif %}{% endfor
+      %}{% endfor %}{% for code in [''www'', ''0ww'', ''0wf'', ''0fw'', ''000''] %}{%
+      if code not in done %}{% set ns.t = ns.t + [{''code'': code, ''score'': cl[code[0]]
+      + cl[code[1]] + cl[code[2]], ''kb'': pos[code[0]], ''ai'': pos[code[1]], ''av'':
+      pos[code[2]]}] %}{% endif %}{% endfor %}{% set ns2 = namespace(s=[all_steps[0]])
+      %}{% for t in ns.t | sort(attribute=''score'') %}{% set ns2.s = ns2.s + [{''name'':
+      ''Bath '' ~ t.kb ~ '' / Kid 2 '' ~ t.ai ~ '' / Kid 1 '' ~ t.av, ''kind'': ''test'',
+      ''code'': t.code, ''kb'': t.kb, ''ai'': t.ai, ''av'': t.av, ''hold'': 180},
+      {''name'': ''Recovery'', ''kind'': ''recovery'', ''kb'': 100, ''ai'': 100, ''av'':
+      100, ''hold'': 120}] %}{% endfor %}{{ ns2.s }}{% else %}{{ all_steps }}{% endif
+      %}'
+    done_entity: '{{ ''input_text.hvac_retest_done'' if (test_set | default(''full''))
+      == ''retest'' else ''input_text.hvac_commissioning_done'' }}'
+  sequence:
+  - alias: Preconditions
+    if:
+    - condition: or
+      conditions:
+      - condition: state
+        entity_id: input_boolean.hvac_vents_physically_installed
+        state: 'off'
+      - condition: state
+        entity_id: input_boolean.hvac_zoning_active
+        state: 'on'
+      - condition: not
+        conditions:
+        - condition: state
+          entity_id: binary_sensor.hvac_cooling_confirmed
+          state: 'on'
+          for:
+            minutes: 3
+      - condition: state
+        entity_id:
+        - sensor.hvac_duct_pressure
+        - sensor.delta_tango_hvac_supply_air_temp
+        - sensor.delta_tango_hvac_return_air_temp
+        - cover.kids_bath_vent
+        - cover.kid2_vent
+        - cover.kid1_vent
+        match: any
+        state:
+        - unavailable
+        - unknown
+    then:
+    - action: persistent_notification.create
+      data:
+        notification_id: hvac_commissioning
+        title: HVAC Commissioning not started
+        message: 'Needs: vents-installed ON ({{ states(''input_boolean.hvac_vents_physically_installed'')
+          }}), zoning-active OFF ({{ states(''input_boolean.hvac_zoning_active'')
+          }}), cooling confirmed for 3+ min (now {{ states(''binary_sensor.hvac_cooling_confirmed'')
+          }} since {{ as_local(states.binary_sensor.hvac_cooling_confirmed.last_changed).strftime(''%H:%M'')
+          }}), and all sensors/vents available.'
+    - stop: Preconditions not met
+  - alias: Test set already complete
+    if:
+    - condition: template
+      value_template: '{{ steps | count == 1 }}'
+    then:
+    - action: automation.turn_off
+      target:
+        entity_id:
+        - automation.hvac_commissioning_auto_run_matrix
+        - automation.hvac_commissioning_auto_run_post_ecm_retest
+      data:
+        stop_actions: false
+    - action: persistent_notification.create
+      data:
+        notification_id: hvac_commissioning
+        title: '{{ ''HVAC post-ECM retest complete'' if (test_set | default(''full''))
+          == ''retest'' else ''HVAC commissioning matrix complete'' }}'
+        message: '{% if (test_set | default(''full'')) == ''retest'' %}All 20 retest
+          steps (each vent alone at 20/15/10/5/0% plus 5 combos) are done. Clear input_text.hvac_retest_done
+          to run the set again.{% else %}All 38 planned vent tests (0/50/100 grid,
+          25% tests, 10%/5% single-vent tests) are done.{% endif %} Auto-run automations
+          turned off.'
+    - stop: Nothing left to test
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.hvac_commissioning_running
+  - alias: Test-only absolute abort limit until baseline is known
+    action: input_number.set_value
+    target:
+      entity_id: input_number.hvac_commissioning_abort_pressure
+    data:
+      value: 250
+  - action: logbook.log
+    data:
+      name: HVAC Commissioning
+      message: Commissioning started. Equipment={{ states('sensor.hvac_ecobee_equipment_running')
+        }}, pressure={{ states('sensor.hvac_duct_pressure') | round(1) }} Pa.
+      entity_id: input_boolean.hvac_commissioning_running
+  - alias: Run every step
+    repeat:
+      for_each: '{{ steps }}'
+      sequence:
+      - variables:
+          step: '{{ repeat.item }}'
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ (now().strftime(''%H:%M'') ~ '' COMMISSIONING '' ~ repeat.index
+            ~ ''/'' ~ steps | count ~ '': '' ~ step.name ~ '' (bath '' ~ step.kb ~
+            ''/kid2 '' ~ step.ai ~ ''/kid1 '' ~ step.av ~ '')'')[:255] }}'
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.kids_bath_vent_requested_position
+        data:
+          value: '{{ step.kb }}'
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.kid2_vent_requested_position
+        data:
+          value: '{{ step.ai }}'
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.kid1_vent_requested_position
+        data:
+          value: '{{ step.av }}'
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kids_bath_vent
+        data:
+          position: '{{ step.kb }}'
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kid2_vent
+        data:
+          position: '{{ step.ai }}'
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kid1_vent
+        data:
+          position: '{{ step.av }}'
+      - alias: Hold while watching every abort condition
+        wait_for_trigger:
+        - trigger: numeric_state
+          entity_id: sensor.hvac_duct_pressure
+          above: input_number.hvac_commissioning_abort_pressure
+          for:
+            seconds: 15
+          id: duct pressure above abort limit
+        - trigger: numeric_state
+          entity_id: sensor.hvac_duct_pressure
+          above: 250
+          for:
+            seconds: 5
+          id: duct pressure above 250 Pa
+        - trigger: numeric_state
+          entity_id: sensor.delta_tango_hvac_supply_air_temp
+          below: 40
+          for:
+            seconds: 30
+          id: supply air below 40F
+        - trigger: numeric_state
+          entity_id: sensor.delta_tango_hvac_delta_t
+          above: 35
+          for:
+            seconds: 30
+          id: delta-T above 35F
+        - trigger: state
+          entity_id:
+          - sensor.hvac_duct_pressure
+          - sensor.delta_tango_hvac_supply_air_temp
+          - sensor.delta_tango_hvac_return_air_temp
+          - cover.kids_bath_vent
+          - cover.kid2_vent
+          - cover.kid1_vent
+          to:
+          - unavailable
+          - unknown
+          for:
+            seconds: 30
+          id: sensor or vent unavailable
+        - trigger: state
+          entity_id: binary_sensor.hvac_cooling_confirmed
+          to: 'off'
+          for:
+            minutes: 2
+          id: cooling stopped
+        timeout:
+          seconds: '{{ step.hold }}'
+        continue_on_timeout: true
+      - alias: Abort on trigger or on a limit already exceeded at end of hold
+        if:
+        - condition: or
+          conditions:
+          - condition: template
+            value_template: '{{ wait.trigger is not none }}'
+          - condition: numeric_state
+            entity_id: sensor.hvac_duct_pressure
+            above: input_number.hvac_commissioning_abort_pressure
+          - condition: numeric_state
+            entity_id: sensor.delta_tango_hvac_supply_air_temp
+            below: 40
+          - condition: numeric_state
+            entity_id: sensor.delta_tango_hvac_delta_t
+            above: 35
+          - condition: state
+            entity_id: binary_sensor.hvac_cooling_confirmed
+            state: 'off'
+        then:
+        - variables:
+            abort_reason: '{{ wait.trigger.id if wait.trigger else ''limit exceeded
+              at end of hold'' }} during ''{{ step.name }}'''
+        - action: script.hvac_open_all_vents
+          data:
+            reason: 'Commissioning abort: {{ abort_reason }}'
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.hvac_commissioning_running
+        - action: persistent_notification.create
+          data:
+            notification_id: hvac_commissioning
+            title: HVAC Commissioning ABORTED - all vents opened
+            message: 'Reason: {{ abort_reason }}
+
+              At abort: pressure {{ states(''sensor.hvac_duct_pressure'') | round(1)
+              }} Pa, supply {{ states(''sensor.delta_tango_hvac_supply_air_temp'')
+              | round(1) }}F, delta-T {{ states(''sensor.delta_tango_hvac_delta_t'')
+              | round(1) }}F, cooling {{ states(''binary_sensor.hvac_cooling_confirmed'')
+              }}.
+
+
+              | Step | Bath/Kid 2/Kid 1 | Pa (2m avg) | Rise | Rise % | Supply | dT
+              | Master/Kid 2/Kid 1 |
+
+              |---|---|---|---|---|---|---|---|
+
+              {% for r in results %}| {{ r.name }} | {{ r.pos }} | {{ r.p }} | {{
+              r.rise }} | {{ r.pct }} | {{ r.supply }} | {{ r.dt }} | {{ r.rooms }}
+              |
+
+              {% endfor %}'
+        - stop: Aborted safely
+      - alias: Capture baseline
+        if:
+        - condition: template
+          value_template: '{{ step.kind == ''baseline'' }}'
+        then:
+        - variables:
+            base: '{{ states(''sensor.hvac_duct_pressure_2_min_average'') | float(0)
+              }}'
+        - action: input_number.set_value
+          target:
+            entity_id: input_number.hvac_baseline_static_pressure
+          data:
+            value: '{{ base | round(1) }}'
+        - alias: Test-only abort limit = baseline +30% (capped at 250 Pa)
+          action: input_number.set_value
+          target:
+            entity_id: input_number.hvac_commissioning_abort_pressure
+          data:
+            value: '{{ [base * 1.3, 250] | min | round(1) }}'
+        - variables:
+            results: '{{ results + [{''name'': step.name ~ '' (2m)'', ''pos'': ''100/100/100'',
+              ''p'': states(''sensor.hvac_duct_pressure_2_min_average'') ~ '' (5m
+              min '' ~ states(''sensor.hvac_duct_pressure_5_min_min'') ~ '' / max
+              '' ~ states(''sensor.hvac_duct_pressure_5_min_max'') ~ '')'', ''rise'':
+              ''-'', ''pct'': ''-'', ''supply'': states(''sensor.hvac_supply_temp_2_min_average''),
+              ''dt'': states(''sensor.hvac_delta_t_2_min_average''), ''rooms'': states(''sensor.master_temp_hk'')
+              ~ ''/'' ~ states(''sensor.kid2_temp_hk'') ~ ''/'' ~ states(''sensor.kid1_temp_hk'')}]
+              }}'
+        else:
+        - variables:
+            p2: '{{ states(''sensor.hvac_duct_pressure_2_min_average'') | float(0)
+              }}'
+            b: '{{ states(''input_number.hvac_baseline_static_pressure'') | float(1)
+              }}'
+        - variables:
+            results: '{{ results + [{''name'': step.name, ''pos'': step.kb ~ ''/''
+              ~ step.ai ~ ''/'' ~ step.av, ''p'': p2 | round(1), ''rise'': (p2 - b)
+              | round(1), ''pct'': ((p2 - b) / b * 100) | round(1) ~ ''%'', ''supply'':
+              states(''sensor.hvac_supply_temp_2_min_average''), ''dt'': states(''sensor.hvac_delta_t_2_min_average''),
+              ''rooms'': states(''sensor.master_temp_hk'') ~ ''/'' ~ states(''sensor.kid2_temp_hk'')
+              ~ ''/'' ~ states(''sensor.kid1_temp_hk'')}] }}'
+        - alias: Mark this combination done
+          if:
+          - condition: template
+            value_template: '{{ step.kind == ''test'' and step.code is defined }}'
+          then:
+          - action: input_text.set_value
+            target:
+              entity_id: '{{ done_entity }}'
+            data:
+              value: '{{ (states(done_entity) ~ '','' ~ step.code).strip('','') }}'
+      - action: logbook.log
+        data:
+          name: HVAC Commissioning
+          message: '{{ results[-1].name }} [{{ results[-1].pos }}]: {{ results[-1].p
+            }} Pa, rise {{ results[-1].rise }} Pa ({{ results[-1].pct }}), supply
+            {{ results[-1].supply }}F, dT {{ results[-1].dt }}F, rooms {{ results[-1].rooms
+            }}'
+          entity_id: input_boolean.hvac_commissioning_running
+  - action: script.hvac_open_all_vents
+    data:
+      reason: Commissioning complete
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.hvac_commissioning_running
+  - action: persistent_notification.create
+    data:
+      notification_id: hvac_commissioning
+      title: HVAC Commissioning complete - all vents open
+      message: 'Baseline saved: {{ states(''input_number.hvac_baseline_static_pressure'')
+        }} Pa. No zoning thresholds were set.
+
+
+        | Step | Bath/Kid 2/Kid 1 | Pa (2m avg) | Rise | Rise % | Supply | dT | Master/Kid 2/Kid 1
+        |
+
+        |---|---|---|---|---|---|---|---|
+
+        {% for r in results %}| {{ r.name }} | {{ r.pos }} | {{ r.p }} | {{ r.rise
+        }} | {{ r.pct }} | {{ r.supply }} | {{ r.dt }} | {{ r.rooms }} |
+
+        {% endfor %}
+
+
+        {% if (test_set | default(''full'')) == ''retest'' %}Post-ECM retest steps
+        done: {{ states(done_entity).split('','') | reject(''eq'', '''') | list |
+        count }} of 20.{% else %}Combinations done: {{ states(done_entity).split('','')
+        | count }} of 38 (0/50/100 grid + 25% tests + 10%/5% single-vent tests).{%
+        endif %}'
+  fields:
+    test_set:
+      name: Test set
+      description: 'full = original 17 steps (~55 min); final_combo = bath closed/kids
+        50% only; matrix = every remaining 0/50/100 combination not yet listed in
+        input_text.hvac_commissioning_done, resumable across cooling cycles; retest
+        = post-ECM retest: each vent alone at 20/15/10/5/0% plus all 20, bath 0 +
+        kids 20, bath 0 + Kid 2 20/Kid 1 5, bath 0 + Kid 2 5/Kid 1 20, all closed
+        (20 tests, mildest first), progress in input_text.hvac_retest_done, resumable
+        across cooling cycles'
+      required: false
+      default: full
+      selector:
+        select:
+          options:
+          - full
+          - final_combo
+          - matrix
+          - retest
+
+hvac_open_all_vents:
+  alias: HVAC - Open All Vents (Safety)
+  icon: mdi:air-filter
+  description: 'Fail-safe: commands every motorized vent fully open, resets requested
+    positions to 100%, and records why. Safe to run any time.'
+  mode: queued
+  max: 5
+  fields:
+    reason:
+      name: Reason
+      description: Why the vents are being opened
+      required: false
+      selector:
+        text: {}
+  sequence:
+  - action: cover.set_cover_position
+    target:
+      entity_id:
+      - cover.kids_bath_vent
+      - cover.kid2_vent
+      - cover.kid1_vent
+    data:
+      position: 100
+    continue_on_error: true
+  - action: input_number.set_value
+    target:
+      entity_id:
+      - input_number.kids_bath_vent_requested_position
+      - input_number.kid2_vent_requested_position
+      - input_number.kid1_vent_requested_position
+    data:
+      value: 100
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.hvac_last_decision
+    data:
+      value: '{{ (now().strftime(''%H:%M'') ~ '' ALL OPEN: '' ~ (reason | default(''manual'')))[:255]
+        }}'
+  - action: logbook.log
+    data:
+      name: HVAC Zoning
+      message: 'All vents commanded open. Reason: {{ reason | default(''manual'')
+        }}'
+      entity_id: input_text.hvac_last_decision
+
+hvac_heat_airflow_test:
+  alias: HVAC - Heat Airflow Test (upstairs)
+  icon: mdi:fire-circle
+  description: One-time test of upstairs furnace airflow on the new ECM blower (2026-11-02).
+    Turns zoning off (all vents open), raises the upstairs heat setpoint 3F to force
+    a heat call, then runs phase A (all open, 15 min) and phase B (Kid 1 throttled
+    to 20%, 8 min). It aborts early if supply air rises more than 70F over the return
+    air, or supply goes over 160F. Afterwards it resumes the Ecobee schedule and turns
+    zoning back on. Phases are marked in input_text.hvac_last_decision so history
+    can be split; analyze supply/return/rise/duct pressure afterwards.
+  mode: single
+  sequence:
+  - variables:
+      lo0: '{{ state_attr(''climate.upstairs_hk'', ''target_temp_low'') | float(69)
+        }}'
+      hi0: '{{ state_attr(''climate.upstairs_hk'', ''target_temp_high'') | float(74)
+        }}'
+      cur: '{{ state_attr(''climate.upstairs_hk'', ''current_temperature'') | float(69)
+        }}'
+      test_lo: '{{ [cur + 3, 75] | min | round(0) }}'
+      test_hi: '{{ [test_lo + 6, hi0] | max | round(0) }}'
+      max_rise: 70
+  - alias: Not while cooling
+    condition: template
+    value_template: '{{ state_attr(''climate.upstairs_hk'', ''hvac_action'') != ''cooling''
+      }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.hvac_last_decision
+    data:
+      value: '{{ now().strftime(''%H:%M'') }} HEAT TEST start: zoning off, setpoint
+        {{ lo0 }} -> {{ test_lo }}'
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.hvac_zoning_active
+  - delay:
+      seconds: 5
+  - action: script.hvac_open_all_vents
+    data:
+      reason: Heat airflow test
+  - action: cover.set_cover_position
+    target:
+      entity_id: cover.master_closet_vent
+    data:
+      position: 100
+    continue_on_error: true
+  - action: climate.set_temperature
+    target:
+      entity_id: climate.upstairs_hk
+    data:
+      target_temp_low: '{{ test_lo }}'
+      target_temp_high: '{{ test_hi }}'
+  - alias: Wait for the furnace to start (up to 6 min)
+    wait_template: '{{ state_attr(''climate.upstairs_hk'', ''hvac_action'') == ''heating''
+      }}'
+    timeout: 00:06:00
+  - if:
+    - condition: template
+      value_template: '{{ not wait.completed }}'
+    then:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.hvac_last_decision
+      data:
+        value: '{{ now().strftime(''%H:%M'') }} HEAT TEST: furnace never started -
+          restoring'
+    else:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.hvac_last_decision
+      data:
+        value: '{{ now().strftime(''%H:%M'') }} HEAT TEST phase A: all vents open
+          (15 min)'
+    - alias: Phase A - all open, abort on excessive rise
+      wait_template: '{{ (states(''sensor.delta_tango_hvac_supply_air_temp'') | float(0))
+        > 160 or ((now() - states.climate.upstairs_hk.last_changed).total_seconds()
+        > 300 and (states(''sensor.delta_tango_hvac_supply_air_temp'') | float(0))
+        - (states(''sensor.delta_tango_hvac_return_air_temp'') | float(0)) > max_rise)
+        }}'
+      timeout: 00:15:00
+    - if:
+      - condition: template
+        value_template: '{{ wait.completed }}'
+      then:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ now().strftime(''%H:%M'') }} HEAT TEST ABORT (phase A): supply
+            {{ states(''sensor.delta_tango_hvac_supply_air_temp'') | float(0) | round(1)
+            }}F, return {{ states(''sensor.delta_tango_hvac_return_air_temp'') | float(0)
+            | round(1) }}F'
+      else:
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.kid1_vent
+        data:
+          position: 20
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ now().strftime(''%H:%M'') }} HEAT TEST phase B: Kid 1 20%, others
+            open (8 min)'
+      - alias: Phase B - Kid 1 throttled, abort on excessive rise
+        wait_template: '{{ (states(''sensor.delta_tango_hvac_supply_air_temp'') |
+          float(0)) > 160 or (states(''sensor.delta_tango_hvac_supply_air_temp'')
+          | float(0)) - (states(''sensor.delta_tango_hvac_return_air_temp'') | float(0))
+          > max_rise }}'
+        timeout: 00:08:00
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.hvac_last_decision
+        data:
+          value: '{{ now().strftime(''%H:%M'') }} HEAT TEST {{ ''ABORT (phase B)''
+            if wait.completed else ''phase B done'' }}: supply {{ states(''sensor.delta_tango_hvac_supply_air_temp'')
+            | float(0) | round(1) }}F, return {{ states(''sensor.delta_tango_hvac_return_air_temp'')
+            | float(0) | round(1) }}F'
+  - alias: Restore
+    action: climate.set_temperature
+    target:
+      entity_id: climate.upstairs_hk
+    data:
+      target_temp_low: '{{ lo0 }}'
+      target_temp_high: '{{ hi0 }}'
+  - action: ecobee.resume_program
+    target:
+      entity_id: climate.upstairs
+    data:
+      resume_all: false
+    continue_on_error: true
+  - action: script.hvac_open_all_vents
+    data:
+      reason: Heat airflow test finished
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.hvac_zoning_active
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.hvac_last_decision
+    data:
+      value: '{{ now().strftime(''%H:%M'') }} HEAT TEST finished: setpoint restored
+        to {{ lo0 }}/{{ hi0 }}, schedule resumed, zoning on'
+

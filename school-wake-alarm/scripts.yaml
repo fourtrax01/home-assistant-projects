@@ -1,0 +1,169 @@
+kid1_wake_up:
+  alias: Kid 1 Wake Up
+  description: School-morning wake-up for Kid 1. Their Google Home Mini (media_player.kid1_bedroom_speaker,
+    named "Kid 1's Speaker" in Google Home) plays their calm Lindsey Stirling tracks
+    (Song of the Caged Bird, Moon Trance, Transcendence, Serenity Found, Les Fées,
+    Unfolding, Dream Weaver) from the Music Assistant library in the order shown on
+    their dashboard (input_text.kid1_wake_up_song_order, reshuffled by script.kid1_wake_up_shuffle
+    right after each alarm starts, so it's new every morning) (library at /media/Music;
+    falls back to Lindsey Stirling radio on Pandora through the Google Assistant SDK
+    if the album isn't in the library) at 30% volume, rising 3% every 30 s to max_volume.
+    10 s after the music starts, their bulbs (light.kid1_bulbs) begin a slow cool-white
+    (5000K) fade from 1% to 100% over about 10 minutes, on a curve that stays dim
+    at first. Each ramp stops if they turn the music or light off. Run by 'Kid 1 School
+    Alarm' on District school days at input_datetime.kid1_wakeup_time.
+  icon: mdi:alarm
+  mode: single
+  fields:
+    max_volume:
+      name: Max volume
+      default: 50
+      selector:
+        number:
+          min: 30
+          max: 100
+          step: 5
+          unit_of_measurement: '%'
+  sequence:
+  - variables:
+      vstart: 0.3
+      vmax: '{{ (max_volume | default(50) | float(50)) / 100 }}'
+  - action: media_player.volume_set
+    target:
+      entity_id: media_player.kid1_bedroom_speaker
+    data:
+      volume_level: '{{ vstart }}'
+    continue_on_error: true
+  - alias: Play their calm Lindsey Stirling tracks in the order shown on their dashboard
+      (input_text.kid1_wake_up_song_order; random if it's missing or invalid); fall
+      back to Pandora radio if it doesn't start; then shuffle the next school day's
+      order
+    sequence:
+    - action: media_player.shuffle_set
+      target:
+        entity_id: media_player.kid1_speaker
+      data:
+        shuffle: false
+      continue_on_error: true
+    - action: media_player.repeat_set
+      target:
+        entity_id: media_player.kid1_speaker
+      data:
+        repeat: 'off'
+      continue_on_error: true
+    - action: music_assistant.play_media
+      target:
+        entity_id: media_player.kid1_speaker
+      data:
+        media_id: '{% set pool = [''214'', ''222'', ''218'', ''230'', ''231'', ''237'',
+          ''235''] %}{% set saved = states(''input_text.kid1_wake_up_song_order'').split('','')
+          | map(''trim'') | list %}{% if saved | sort == pool | sort %}{% set order
+          = saved %}{% else %}{% set ns = namespace(rest=pool, out=[]) %}{% for i
+          in range(pool | length) %}{% set pick = ns.rest | random %}{% set ns.out
+          = ns.out + [pick] %}{% set ns.rest = ns.rest | reject(''eq'', pick) | list
+          %}{% endfor %}{% set order = ns.out %}{% endif %}{{ order | map(''regex_replace'',
+          ''^'', ''library://track/'') | list }}'
+        media_type: track
+        enqueue: replace
+        radio_mode: false
+      continue_on_error: true
+    - alias: Give the album up to 20 s to start. Uses wait_template, not wait_for_trigger,
+        because play_media blocks ~5 s and the speaker is often ALREADY playing when it
+        returns, so a trigger-based wait missed it and Pandora replaced the album
+        every morning (fixed 2026-11-23)
+      wait_template: '{{ is_state(''media_player.kid1_speaker'', ''playing'')
+        or is_state(''media_player.kid1_bedroom_speaker'', ''playing'') }}'
+      timeout:
+        seconds: 20
+      continue_on_timeout: true
+    - if:
+      - condition: template
+        value_template: '{{ not wait.completed }}'
+      then:
+      - alias: 'Album not available yet: Pandora radio as before'
+        action: google_assistant_sdk.send_text_command
+        data:
+          command: play Lindsey Stirling radio on Pandora on Kid 1's Speaker
+    - alias: Pick the next school day's order (shown on their dashboard)
+      action: script.turn_on
+      target:
+        entity_id: script.kid1_wake_up_shuffle
+  - alias: Wait for the music to start (returns at once if it is already playing)
+    wait_template: '{{ is_state(''media_player.kid1_bedroom_speaker'', ''playing'') }}'
+    timeout:
+      seconds: 45
+    continue_on_timeout: true
+  - alias: Start at 30% (Pandora or the speaker may have changed the volume)
+    action: media_player.volume_set
+    target:
+      entity_id: media_player.kid1_bedroom_speaker
+    data:
+      volume_level: '{{ vstart }}'
+    continue_on_error: true
+  - parallel:
+    - alias: Volume ramp 30% -> max, +3% every 30 s
+      repeat:
+        while:
+        - condition: state
+          entity_id: media_player.kid1_bedroom_speaker
+          state: playing
+        - condition: template
+          value_template: '{{ (vstart + 0.03 * (repeat.index - 1)) < vmax }}'
+        sequence:
+        - delay:
+            seconds: 30
+        - condition: state
+          entity_id: media_player.kid1_bedroom_speaker
+          state: playing
+        - action: media_player.volume_set
+          target:
+            entity_id: media_player.kid1_bedroom_speaker
+          data:
+            volume_level: '{{ [vstart + 0.03 * repeat.index, vmax] | min | round(2)
+              }}'
+    - alias: 'Light: 10 s after the music, slow curve 1% -> 100% over ~10 min'
+      sequence:
+      - delay:
+          seconds: 10
+      - action: light.turn_on
+        target:
+          entity_id: light.kid1_bulbs
+        data:
+          color_temp_kelvin: 5000
+          brightness_pct: 1
+      - repeat:
+          count: 20
+          sequence:
+          - delay:
+              seconds: 30
+          - condition: state
+            entity_id: light.kid1_bulbs
+            state: 'on'
+          - action: light.turn_on
+            target:
+              entity_id: light.kid1_bulbs
+            data:
+              brightness_pct: '{{ [[(1 + 99 * (repeat.index / 20) ** 2) | round(0)
+                | int, 1] | max, 100] | min }}'
+
+kid1_wake_up_shuffle:
+  alias: Kid 1 Wake-up Shuffle
+  description: 'Picks a new random order of Kid 1''s 7 calm wake-up tracks (Music
+    Assistant library track ids) and stores it in input_text.kid1_wake_up_song_order
+    as comma-separated ids. script.kid1_wake_up plays the stored order and calls
+    this right after the music starts, so their dashboard always shows the NEXT school
+    day''s songs. The ''Shuffle again'' button on their dashboard runs it too. Pool:
+    214 Song of the Caged Bird, 222 Moon Trance, 218 Transcendence, 230 Serenity Found,
+    231 Les Fees, 237 Unfolding, 235 Dream Weaver.'
+  icon: mdi:shuffle-variant
+  mode: single
+  sequence:
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.kid1_wake_up_song_order
+    data:
+      value: '{% set pool = [''214'', ''222'', ''218'', ''230'', ''231'', ''237'',
+        ''235''] %}{% set ns = namespace(rest=pool, out=[]) %}{% for i in range(pool
+        | length) %}{% set pick = ns.rest | random %}{% set ns.out = ns.out + [pick]
+        %}{% set ns.rest = ns.rest | reject(''eq'', pick) | list %}{% endfor %}{{
+        ns.out | join('','') }}'

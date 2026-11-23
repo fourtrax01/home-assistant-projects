@@ -1,0 +1,39 @@
+# Pieces of configuration.yaml this project needs. Adjust paths to where you copy the scripts.
+# Helpers (create in Settings > Devices & services > Helpers, or in YAML):
+#   input_text.doorbell_tv_caption            (max length 255)
+#   input_datetime.doorbell_last_person_seen  (date and time)
+#   input_datetime.doorbell_phone_last_notified
+#   input_datetime.doorbell_tv_last_shown
+#   input_boolean.human_door_last_10_mins
+# Entities from other integrations: camera.doorbell, binary_sensor.doorbell (button),
+# binary_sensor.doorbell_human (Frigate person occupancy), media_player.garage_speaker.
+# script.home_speaker_say is a small TTS script of my own (not included); replace it or delete that step.
+# tts.cloud_say needs Home Assistant Cloud; swap in your own TTS if you don't have it.
+
+# Note: Home Assistant stops any shell_command after 60 seconds. The clip download and
+# the AI caption both keep themselves under that limit.
+shell_command:
+  describe_snapshot: >
+    python3 /config/scripts/describe_image.py '{{ snap_file }}'
+  save_doorbell_clip: >
+    /config/scripts/save_doorbell_clip.sh {{ camera }} {{ clip_start }} {{ clip_end }} {{ clip_file }}
+  # Run nightly by "Doorbell Media Cleanup": snapshots after 30 days, clips after 48 hours.
+  # -mmin is exact; -mtime rounds down to whole days (+2 would keep clips up to 72 h).
+  delete_old_doorbell_media: >
+    find /config/www/snapshots /config/www/clips -type f
+    \( -name "doorbell_*.jpg" -mmin +43200 -o -name "doorbell_*.mp4" -mmin +2880 \) -delete
+    2>/dev/null || true
+  # 128-bit random file-name token from the OS's cryptographic generator.
+  doorbell_token: python3 -c "import secrets; print(secrets.token_hex(16))"
+
+rest_command:
+  # TvOverlay (Android TV app) picture-in-picture popups
+  tvoverlay_notify:
+    url: "http://{{ host }}:{{ port }}/notify"
+    method: POST
+    content_type: "application/json; charset=utf-8"
+    payload: >-
+      {{ {"id": id | default(none), "image": image | default(none), "video": video | default(none),
+          "corner": corner | default(none), "seconds": seconds | default(none), "duration": duration | default(none),
+          "notificationLayoutName": notificationLayoutName | default(none), "title": title | default(none),
+          "message": message | default(none)} | tojson }}

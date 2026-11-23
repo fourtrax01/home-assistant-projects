@@ -1,0 +1,205 @@
+{#-
+  HVAC zoning controller decision logic (upstairs unit).
+  Used by automation.hvac_zoning_controller. Returns JSON:
+    {state, zone, safety, recovering, clear, reason, kb, ai, av, stage}
+  kb/ai/av = target % open for kids bath / Kid 2 / Kid 1 vents.
+  `sim` overrides live inputs for testing, e.g. hvac_plan({'cool_on': true, 't_ai': 78}).
+  All limits come from input_number helpers on the HVAC Zoning dashboard.
+-#}
+{%- macro hvac_plan(sim={}) -%}
+{%- set g = namespace(fail=[], wait=[]) -%}
+{%- set rmin = states('input_number.hvac_room_temp_min_valid') | float(50) -%}
+{%- set rmax = states('input_number.hvac_room_temp_max_valid') | float(95) -%}
+{#- A reading only counts as failed once it has been bad for `grace` seconds:
+    the Delta Tango probes drop to 'unknown' for ~2 s now and then. -#}
+{%- set grace = sim.get('grace', 60) -%}
+{%- set room_ids = {'master': 'sensor.master_temp_hk', 'kid2': 'sensor.kid2_temp_hk', 'kid1': 'sensor.kid1_temp_hk'} -%}
+{%- set rooms = {
+  'master': sim.get('t_m', states('sensor.master_temp_hk')),
+  'kid2': sim.get('t_ai', states('sensor.kid2_temp_hk')),
+  'kid1': sim.get('t_av', states('sensor.kid1_temp_hk'))} -%}
+{%- for k, v in rooms.items() -%}
+  {%- set bad_for = sim.get('bad_for', (now() - states[room_ids[k]].last_changed).total_seconds() if states[room_ids[k]] else 9999) -%}
+  {%- if not is_number(v) -%}
+    {%- if bad_for >= grace -%}{%- set g.fail = g.fail + [k ~ ' temp unavailable'] -%}{%- else -%}{%- set g.wait = g.wait + [k ~ ' temp'] -%}{%- endif -%}
+  {%- elif v | float < rmin or v | float > rmax -%}
+    {%- if bad_for >= grace -%}{%- set g.fail = g.fail + [k ~ ' temp implausible ' ~ v ~ 'F'] -%}{%- else -%}{%- set g.wait = g.wait + [k ~ ' temp'] -%}{%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- for e, n in [('sensor.hvac_duct_pressure', 'duct pressure'), ('sensor.delta_tango_hvac_supply_air_temp', 'supply temp'), ('sensor.delta_tango_hvac_return_air_temp', 'return temp')] -%}
+  {%- set bad_for = sim.get('bad_for', (now() - states[e].last_changed).total_seconds() if states[e] else 9999) -%}
+  {%- if not is_number(sim.get(n, states(e))) -%}
+    {%- if bad_for >= grace -%}{%- set g.fail = g.fail + [n ~ ' unavailable'] -%}{%- else -%}{%- set g.wait = g.wait + [n] -%}{%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set sp = sim.get('sp', state_attr('climate.upstairs_hk', 'target_temp_high')) -%}
+{%- set act = sim.get('act', state_attr('climate.upstairs_hk', 'hvac_action')) | string -%}
+{%- if states('climate.upstairs_hk') in ['unavailable', 'unknown'] or not is_number(sp) -%}
+  {%- set g.fail = g.fail + ['thermostat unavailable'] -%}
+{%- endif -%}
+{#- Vents get the same grace: on 2026-09-29 they blipped 'unavailable' for 1-12 s
+    ~8 times in an hour, and each blip forced all vents to 100% plus a 10-min
+    recovery. The vent firmware itself fails open after 30 s without wifi. -#}
+{%- for c in ['cover.kids_bath_vent', 'cover.kid2_vent', 'cover.kid1_vent'] -%}
+  {%- if sim.get(c, states(c)) in ['unavailable', 'unknown'] -%}
+    {%- set bad_for = sim.get('bad_for', (now() - states[c].last_changed).total_seconds() if states[c] else 9999) -%}
+    {%- set n = c.split('.')[1] | replace('_', ' ') -%}
+    {%- if bad_for >= grace -%}{%- set g.fail = g.fail + [n ~ ' offline'] -%}{%- else -%}{%- set g.wait = g.wait + [n] -%}{%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set sp = sp | float(75) -%}
+{%- set p30 = sim.get('p30', states('sensor.hvac_duct_pressure_30s_average')) | float(0) -%}
+{%- set p2 = sim.get('p2', states('sensor.hvac_duct_pressure_2_min_average')) | float(0) -%}
+{%- set soft = states('input_number.hvac_pressure_soft_limit') | float(125) -%}
+{%- set hard = states('input_number.hvac_pressure_hard_limit') | float(136) -%}
+{%- set s2 = sim.get('s2', states('sensor.hvac_supply_temp_2_min_average')) | float(99) -%}
+{%- set dt2 = sim.get('dt2', states('sensor.hvac_delta_t_2_min_average')) | float(0) -%}
+{%- set smin = states('input_number.hvac_supply_air_min_temp') | float(42) -%}
+{%- set dtmax = states('input_number.hvac_delta_t_max') | float(34) -%}
+{%- set cool_on = sim.get('cool_on', is_state('binary_sensor.hvac_cooling_confirmed', 'on')) -%}
+{%- set cool_min = sim.get('cool_min', (now() - states.binary_sensor.hvac_cooling_confirmed.last_changed).total_seconds() / 60) -%}
+{%- set prev = sim.get('prev', states('input_select.hvac_zoning_state')) -%}
+{%- set prev_min = sim.get('prev_min', (now() - states.input_select.hvac_zoning_state.last_changed).total_seconds() / 60) -%}
+{%- set ov = sim.get('ov', is_state('input_boolean.hvac_safety_override', 'on')) -%}
+{%- set rs = sim.get('rs', states('input_text.hvac_safety_override_reason')) -%}
+{%- set rs_min = sim.get('rs_min', (now() - states.input_text.hvac_safety_override_reason.last_changed).total_seconds() / 60) -%}
+{%- set rec = states('input_number.hvac_safety_recovery_minutes') | float(10) -%}
+{%- set dwell = states('input_number.hvac_vent_dwell_minutes') | float(15) -%}
+{%- set cap = states('input_number.kids_bath_vent_max_open') | int(100) -%}
+{%- set thr = states('input_number.hvac_throttle_position') | int(10) -%}
+{#- 'Open' is not 100: normal control opens to `opn` (less vent travel/wear), soft-pressure/recovery/heating to `full`,
+    100 only for catastrophic events (sensor failure, over the hard limit, supply too cold, delta-T too high) -#}
+{%- set opn = states('input_number.hvac_open_position') | int(100) -%}
+{%- set full = [states('input_number.hvac_full_open_position') | int(100), opn] | max -%}
+{#- Kid 2 has their own 'open' (the user: if 20% slows their room, raise only theirs) -#}
+{%- set ai_opn = states('input_number.hvac_kid2_open_position') | int(opn) -%}
+{%- set kb_req = sim.get('kb_req', states('input_number.kids_bath_vent_requested_position')) | int(100) -%}
+{%- set ai_req = sim.get('ai_req', states('input_number.kid2_vent_requested_position')) | int(100) -%}
+{%- set av_req = sim.get('av_req', states('input_number.kid1_vent_requested_position')) | int(100) -%}
+{%- set stage_prev = sim.get('stage_prev', states('input_number.hvac_priority_stage')) | int(0) -%}
+{%- set stage_min = sim.get('stage_min', (now() - states.input_number.hvac_priority_stage.last_changed).total_seconds() / 60) -%}
+{#- 'Day' for master priority = outside evening mode (evening runs from the evening handoff until 05:00), not sunrise/sunset: the user gets into bed ~6:30 AM, before winter sunrise -#}
+{%- set day = sim.get('day', true) -%}
+{#- 'bed' = day sleep: set only when the bed turns on during the day (bed automation), cleared by bed off / evening handoff.
+    The raw switch.my_bed is not used: on days off it stays on overnight and would start master priority at 05:00. -#}
+{%- set bed = sim.get('bed', is_state('input_boolean.hvac_day_sleep', 'on')) -%}
+{%- set evening = sim.get('evening', is_state('input_boolean.hvac_evening_mode', 'on')) -%}
+{%- set hour = sim.get('hour', now().hour) -%}
+{%- set outdoor = sim.get('outdoor', state_attr('weather.forecast_home', 'temperature')) | float(0) -%}
+{%- set safety_states = ['SENSOR_FAILURE', 'PRESSURE_OVERRIDE', 'TEMPERATURE_OVERRIDE'] -%}
+{%- set o = namespace(state='NORMAL', zone='NONE', safety=false, recovering=false, clear=false, reason='', kb=100, ai=100, av=100, stage=0, hold=false) -%}
+
+{#- 1. Safety first: any failure or limit -> all vents open -#}
+{%- if g.fail | count > 0 -%}
+  {%- set o.state = 'SENSOR_FAILURE' -%}{%- set o.safety = true -%}
+  {%- set o.reason = g.fail | join(', ') -%}
+{%- elif p30 > hard -%}
+  {%- set o.state = 'PRESSURE_OVERRIDE' -%}{%- set o.safety = true -%}
+  {%- set o.reason = 'duct pressure ' ~ p30 ~ ' Pa above hard limit ' ~ hard -%}
+{%- elif p2 > soft -%}
+  {#- progressive: kids open first; bath too if still over after 3 min -#}
+  {%- set o.state = 'PRESSURE_OVERRIDE' -%}{%- set o.safety = true -%}
+  {%- set o.reason = 'duct pressure 2-min avg ' ~ p2 ~ ' Pa above soft limit ' ~ soft -%}
+  {%- if not (prev == 'PRESSURE_OVERRIDE' and prev_min >= 3) -%}{%- set o.kb = kb_req -%}{%- endif -%}
+{%- elif s2 < smin -%}
+  {%- set o.state = 'TEMPERATURE_OVERRIDE' -%}{%- set o.safety = true -%}
+  {%- set o.reason = 'supply air 2-min avg ' ~ s2 ~ 'F below ' ~ smin ~ 'F' -%}
+{%- elif cool_on and cool_min >= 7 and dt2 > dtmax -%}
+  {#- first 5 min of a cycle ignored (+2 min averaging window) -#}
+  {%- set o.state = 'TEMPERATURE_OVERRIDE' -%}{%- set o.safety = true -%}
+  {%- set o.reason = 'delta-T 2-min avg ' ~ dt2 ~ 'F above ' ~ dtmax ~ 'F' -%}
+
+{#- 1b. A reading blipped out (< grace): hold current positions, decide nothing -#}
+{%- elif g.wait | count > 0 -%}
+  {%- set o.state = prev if prev not in ['DISABLED'] else 'HVAC_OFF' -%}
+  {%- set o.zone = sim.get('zone_prev', states('input_select.hvac_requested_zone')) -%}
+  {%- set o.kb = kb_req -%}{%- set o.ai = ai_req -%}{%- set o.av = av_req -%}{%- set o.stage = stage_prev -%}{%- set o.hold = true -%}
+  {%- set o.reason = 'holding - ' ~ g.wait | join(', ') ~ ' briefly unavailable' -%}
+
+{#- 2. Recovery: stay all-open for N minutes after a safety event clears -#}
+{%- elif ov and not (rs.startswith('Recovering') and rs_min >= rec) -%}
+  {%- set o.state = prev if prev in safety_states else 'SENSOR_FAILURE' -%}
+  {%- set o.safety = true -%}{%- set o.recovering = true -%}
+  {%- set o.reason = rs if rs.startswith('Recovering') else ('Recovering (was: ' ~ rs ~ ')') -%}
+
+{%- else -%}
+  {%- set o.clear = ov -%}
+  {%- set t_m = rooms.master | float -%}{%- set t_ai = rooms.kid2 | float -%}{%- set t_av = rooms.kid1 | float -%}
+  {%- if act == 'heating' -%}
+    {#- 3. Heating: all open (not commissioned for heating) -#}
+    {%- set o.state = 'HEATING' -%}{%- set o.reason = 'heating - all vents open' -%}
+  {%- elif not cool_on -%}
+    {#- 4. Idle: hold positions through short off-cycles, neutral after 30 min -#}
+    {%- set o.state = 'HVAC_OFF' -%}
+    {%- if cool_min >= 30 -%}
+      {%- set o.kb = [cap, 100] | min -%}
+      {%- set o.reason = 'idle ' ~ cool_min | round(0) | int ~ ' min - neutral (bath at cap)' -%}
+    {%- else -%}
+      {%- set o.kb = [kb_req, cap] | min -%}{%- set o.ai = ai_req -%}{%- set o.av = av_req -%}{%- set o.stage = stage_prev -%}
+      {%- set o.reason = 'idle ' ~ cool_min | round(0) | int ~ ' min - holding positions' -%}
+    {%- endif -%}
+  {%- else -%}
+    {#- Kids east/west balance, shared by master priority and normal mode -#}
+    {%- set gap = states('input_number.hvac_kids_balance_gap') | float(1) -%}
+    {%- set pre = outdoor >= 85 and 13 <= hour < 17 -%}
+    {%- set bias = 1.0 if pre else 0.0 -%}
+    {%- set d = (t_ai - t_av + bias) | round(2) -%}
+    {%- set bal_av = d >= gap or (av_req < opn and d >= gap - 0.5) -%}
+    {%- set bal_ai = not bal_av and (d <= -gap or (ai_req < ai_opn and d <= -(gap - 0.5))) -%}
+    {#- Master priority survives short off-cycles: idle keeps the stage for 30 min -#}
+    {%- set m_cont = stage_prev >= 1 and prev in ['MASTER_PRIORITY', 'HVAC_OFF'] -%}
+    {%- set m_need = (t_m > sp - 0.5) if m_cont else (t_m > sp) -%}
+    {#- Evening mode (automation.hvac_evening_handoff) ends master priority so the kids cool down before bedtime -#}
+    {%- if bed and day and not evening and m_need -%}
+      {#- 5. Master priority (daytime sleep): bath shut; any kid room less than the allowance warmer than the master shut; others balanced, then staged throttling (cooler kid, then both), one stage per dwell -#}
+      {%- set stage = ((stage_prev + 1) if (stage_min >= dwell and stage_prev < 3 and t_m > sp) else stage_prev) if m_cont else 1 -%}
+      {%- set o.state = 'MASTER_PRIORITY' -%}{%- set o.zone = 'MASTER' -%}{%- set o.stage = stage -%}{%- set o.kb = 0 -%}
+      {%- set ai_need = t_ai > sp + 0.5 -%}{%- set av_need = t_av > sp + 0.5 -%}
+      {%- set cooler = 'ai' if t_ai <= t_av else 'av' -%}
+      {%- if bal_av and not av_need -%}{%- set o.av = thr -%}{%- endif -%}
+      {%- if bal_ai and not ai_need -%}{%- set o.ai = thr -%}{%- endif -%}
+      {%- if stage >= 2 and cooler == 'ai' and not ai_need -%}{%- set o.ai = thr -%}{%- endif -%}
+      {%- if stage >= 2 and cooler == 'av' and not av_need -%}{%- set o.av = thr -%}{%- endif -%}
+      {%- if stage >= 3 and not ai_need -%}{%- set o.ai = thr -%}{%- endif -%}
+      {%- if stage >= 3 and not av_need -%}{%- set o.av = thr -%}{%- endif -%}
+      {#- Kid rooms may run up to `allow` F warmer than the master: shut until a room reaches master + allow,
+          re-shut once it is back below master + allow - 0.5 -#}
+      {%- set allow = states('input_number.hvac_master_priority_kid_allowance') | float(3) -%}
+      {%- set ai_shut = (t_ai < t_m + allow) if ai_req == 0 else (t_ai < t_m + allow - 0.5) -%}
+      {%- set av_shut = (t_av < t_m + allow) if av_req == 0 else (t_av < t_m + allow - 0.5) -%}
+      {%- if ai_shut -%}{%- set o.ai = 0 -%}{%- endif -%}
+      {%- if av_shut -%}{%- set o.av = 0 -%}{%- endif -%}
+      {%- set shut = (['kid2'] if ai_shut else []) + (['kid1'] if av_shut else []) -%}
+      {%- set o.reason = 'master ' ~ t_m ~ 'F vs setpoint ' ~ sp ~ 'F, stage ' ~ stage ~ ('; shut (under master + ' ~ allow ~ 'F): ' ~ shut | join(', ') if shut else '') ~ ('; balance: Kid 2 ' ~ t_ai ~ 'F, Kid 1 ' ~ t_av ~ 'F -> favor ' ~ ('kid2' if bal_av else 'kid1') if (bal_av or bal_ai) and not shut else '') -%}
+    {%- else -%}
+      {#- 6. Normal: balance the kids (east/west), bath at cap -#}
+      {%- set o.kb = cap -%}
+      {%- if bal_av -%}
+        {%- set o.av = thr -%}{%- set o.zone = 'KID2' -%}
+      {%- elif bal_ai -%}
+        {%- set o.ai = thr -%}{%- set o.zone = 'KID1' -%}
+      {%- endif -%}
+      {%- set o.reason = 'balance: Kid 2 ' ~ t_ai ~ 'F, Kid 1 ' ~ t_av ~ 'F' ~ (', pre-cool bias +1F' if pre else '') ~ ' -> favor ' ~ (o.zone | lower if o.zone != 'NONE' else 'neither') -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endif -%}
+{#- 7. Scale 'open' (anything at or above opn) to the position this state allows; a blip hold keeps positions as-is -#}
+{%- if not o.hold -%}
+  {%- set cat = not o.recovering and (o.state in ['SENSOR_FAILURE', 'TEMPERATURE_OVERRIDE'] or (o.state == 'PRESSURE_OVERRIDE' and p30 > hard)) -%}
+  {%- set top = 100 if cat else (full if (o.safety or o.state == 'HEATING') else opn) -%}
+  {%- if o.kb >= opn -%}{%- set o.kb = top -%}{%- endif -%}
+  {%- set ai_top = 100 if cat else ([full, ai_opn] | max if (o.safety or o.state == 'HEATING') else ai_opn) -%}
+  {%- if o.ai >= [opn, ai_opn] | min -%}{%- set o.ai = ai_top -%}{%- endif -%}
+  {%- if o.av >= opn -%}{%- set o.av = top -%}{%- endif -%}
+{%- endif -%}
+{#- 8. Fan balancing (blower only, AC idle; automation.hvac_fan_circulation_balance): the kids' rooms
+    open to at least `bal` % so the mixing air reaches every bedroom, not just the master (2026-10-08).
+    Bath stays at its cap. Closing back afterwards follows the normal dwell. -#}
+{%- set fb = sim.get('fan_balance', is_state('input_boolean.hvac_fan_balance_running', 'on')) -%}
+{%- if fb and o.state == 'HVAC_OFF' and not o.hold -%}
+  {%- set bal = states('input_number.hvac_fan_balance_min_open') | int(30) -%}
+  {%- set o.ai = [o.ai, bal] | max -%}{%- set o.av = [o.av, bal] | max -%}
+  {%- set o.reason = o.reason ~ '; fan balancing - kids at least ' ~ bal ~ '%' -%}
+{%- endif -%}
+{{- {'state': o.state, 'zone': o.zone, 'safety': o.safety, 'recovering': o.recovering, 'clear': o.clear, 'reason': o.reason[:200], 'kb': o.kb | int, 'ai': o.ai | int, 'av': o.av | int, 'stage': o.stage | int} | to_json -}}
+{%- endmacro -%}

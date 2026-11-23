@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+# Runtime lock files written by the Govee scripts
+*.run
+# Secrets: never commit these
+secrets.yaml
+secrets*.yaml
+*.key
+*.pem
+.gemini_key
+*token*.txt
+*.env
+.env
+.env.*
+# Home Assistant state, databases and backups
+.storage/
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.tar

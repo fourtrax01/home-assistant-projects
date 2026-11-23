@@ -1,0 +1,2191 @@
+- id: '1620017652118'
+  alias: Sliding Door /Back Porch Light Automation
+  description: ''
+  triggers:
+  - id: slider_open
+    trigger: state
+    entity_id: binary_sensor.slider
+    to: 'on'
+  - id: person_detected
+    trigger: state
+    entity_id: binary_sensor.back_yard_person
+    to: 'on'
+  - id: clear_5m
+    trigger: state
+    entity_id:
+    - binary_sensor.slider
+    - binary_sensor.back_yard_person
+    to: 'off'
+    for: 00:05:00
+  - trigger: light.turned_on
+    target:
+      entity_id: light.back_porch_switch1
+    options:
+      for: 00:00:00
+    alias: switch on
+    id: switch on
+  - trigger: light.turned_off
+    target:
+      entity_id: light.back_porch_switch1
+    options:
+      for: 00:00:00
+    alias: switch off
+    id: switch off
+  conditions:
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+    enabled: true
+  actions:
+  - choose:
+    - conditions:
+      - condition: or
+        conditions:
+        - condition: trigger
+          id:
+          - slider_open
+          - person_detected
+        - condition: and
+          conditions:
+          - condition: trigger
+            id:
+            - switch on
+          - condition: state
+            entity_id: light.back_porch
+            state: 'off'
+      sequence:
+      - action: light.turn_on
+        data:
+          brightness_pct: 100
+        target:
+          entity_id: light.back_porch
+      - choose:
+        - conditions:
+          - condition: state
+            entity_id: climate.traeger
+            state: heat
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.grill_light
+        default: []
+    - conditions:
+      - condition: trigger
+        id:
+        - clear_5m
+      - condition: state
+        entity_id: binary_sensor.slider
+        state: 'off'
+      - condition: state
+        entity_id: binary_sensor.back_yard_person
+        state: 'off'
+        enabled: false
+      sequence:
+      - action: light.turn_off
+        target:
+          entity_id: light.back_porch
+      - action: light.turn_off
+        target:
+          entity_id: light.grill_light
+    - conditions:
+      - condition: trigger
+        id:
+        - switch off
+      - condition: state
+        entity_id: light.back_porch
+        state: 'on'
+      sequence:
+      - action: light.turn_off
+        target:
+          entity_id: light.back_porch
+      - action: light.turn_off
+        target:
+          entity_id: light.grill_light
+    default: []
+  mode: restart
+
+- id: '1749880798946'
+  alias: Porch Light Full Smart Control
+  description: Full automation with dusk/dawn, porch activity boost, midnight dim,
+    holiday presets, Christmas rotation, and 5-minute state enforcement. Halloween
+    runs script.porch_halloween_cycle and the WLED "Halloween" playlist (eave playlist
+    chosen at sunset; WLED runs it locally).
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.porch_activity
+    to: 'on'
+    id: porch_activity_on
+  - trigger: state
+    entity_id: binary_sensor.porch_activity
+    to: 'off'
+    for: 00:02:00
+    id: porch_activity_off
+  - trigger: time
+    at: 00:00:05
+    id: midnight_dim
+  - trigger: time_pattern
+    minutes: /5
+    id: five_minute_check
+  - alias: Porch Look set back to Auto by hand - restore the normal/holiday look now
+    trigger: event
+    event_type: porch_look_auto_resume
+    id: five_minute_check
+  - trigger: sun
+    event: sunrise
+    id: sunrise_off
+  - trigger: sun
+    event: sunset
+    id: sunset_on
+  conditions:
+  - alias: Porch wall switch turned everything off (input_boolean.porch_manual_off)
+      - only sunrise/sunset still run; sunrise clears the flag
+    condition: template
+    value_template: '{{ trigger.id in [''sunrise_off'', ''sunset_on''] or is_state(''input_boolean.porch_manual_off'',
+      ''off'') }}'
+  - alias: A picked Porch Look (input_select.porch_look) is playing - only midnight
+      and sunrise still run
+    condition: template
+    value_template: '{{ trigger.id in [''midnight_dim'', ''sunrise_off''] or is_state(''input_select.porch_look'',
+      ''Auto'') }}'
+  actions:
+  - variables:
+      holiday_msg: "{{\n  state_attr(\n    'calendar.holiday_lights_calendar',\n    'message'\n
+        \ )\n  | default('', true)\n  | trim\n}}"
+      valid_presets: "{{\n  state_attr(\n    'select.permanant_lights_preset',\n    'options'\n
+        \ )\n  | default([], true)\n}}"
+      wled_preset: '{{ ''Birthday'' if holiday_msg.startswith(''Birthday'') else ([''Christmas
+        Cycle'', ''Christmas Cycle 2''] | random if holiday_msg == ''Christmas'' else
+        holiday_msg) }}'
+      valid_playlists: '{{ state_attr(''select.permanant_lights_playlist'', ''options'')
+        | default([], true) }}'
+  - choose:
+    - alias: Midnight - holiday/theme effects end, back to normal white at the night
+        level
+      conditions:
+      - condition: trigger
+        id: midnight_dim
+      - condition: state
+        entity_id: light.porch_effect_group
+        state: 'on'
+      sequence:
+      - alias: 'Christmas Cycle / Porch Follows Eaves: end the effects right at midnight
+          (eaves off, stop the stream) so the porch goes straight to normal white
+          at 30% (user 2026-11-22)'
+        if:
+        - condition: state
+          entity_id: input_boolean.porch_follows_eaves
+          state: 'on'
+        then:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.porch_follows_eaves
+        - action: light.turn_off
+          target:
+            entity_id: light.permanant_lights
+          data:
+            transition: 1
+          continue_on_error: true
+        - alias: Let the bridge stop streaming before the white command
+          delay:
+            seconds: 3
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.porch_light_target_brightness
+        data:
+          value: 77
+      - action: script.turn_off
+        target:
+          entity_id:
+          - script.porch_holiday_cycle
+          - script.porch_christmas_cycle
+          - script.porch_easter_cycle
+          - script.porch_birthday_cycle
+          - script.porch_cycle_top_bottom
+          - script.porch_breathe
+          - script.porch_twinkle
+          - script.porch_color_chase
+          - script.porch_multicolor_twinkle
+          - script.porch_color_chase_twinkle
+          - script.porch_multicolor_breathing
+          - script.porch_multicolor_twinkle
+          - script.porch_color_chase_twinkle
+          - script.porch_christmas_multicolor
+          - script.porch_christmas
+          - script.porch_fourth_of_july
+          - script.porch_halloween_cycle
+          - script.porch_halloween_candle
+          - script.porch_halloween
+          - script.porch_halloween_multicolor
+          - script.porch_halloween_multicolor_twinkle
+          - script.porch_halloween_chase_twinkle
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.porch_current_look
+        data:
+          value: ''
+      - sequence:
+        - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+            after an off)
+          action: switch.turn_on
+          target:
+            entity_id:
+            - switch.porch_wall_light_power_switch
+            - switch.walk_porch_light_power_switch
+            - switch.walkway_wall_light_power_switch
+            - switch.left_wall_light_power_switch
+            - switch.center_wall_light_power_switch
+            - switch.right_wall_light_power_switch
+        - alias: Nudge so Matter re-applies white even if it already reports 4200K
+          action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            color_temp_kelvin: 4000
+            brightness: '{{ 255 if is_state(''binary_sensor.porch_activity'', ''on'')
+              else 77 }}'
+      - sequence:
+        - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+            after an off)
+          action: switch.turn_on
+          target:
+            entity_id:
+            - switch.porch_wall_light_power_switch
+            - switch.walk_porch_light_power_switch
+            - switch.walkway_wall_light_power_switch
+            - switch.left_wall_light_power_switch
+            - switch.center_wall_light_power_switch
+            - switch.right_wall_light_power_switch
+        - action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            color_temp_kelvin: 4200
+            brightness: '{{ 255 if is_state(''binary_sensor.porch_activity'', ''on'')
+              else 77 }}'
+      - action: light.turn_on
+        target:
+          entity_id:
+          - light.porch_wall_light_segment_003
+          - light.porch_wall_light_segment_004
+          - light.walk_porch_light_segment_003
+          - light.walk_porch_light_segment_004
+          - light.walkway_wall_light_segment_003
+          - light.walkway_wall_light_segment_004
+          - light.left_wall_light_segment_003
+          - light.left_wall_light_segment_004
+          - light.center_wall_light_segment_003
+          - light.center_wall_light_segment_004
+          - light.right_wall_light_segment_003
+          - light.right_wall_light_segment_004
+        data:
+          rgb_color:
+          - 255
+          - 190
+          - 75
+    - conditions:
+      - condition: trigger
+        id: sunset_on
+      sequence:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.porch_light_target_brightness
+        data:
+          value: 191
+      - sequence:
+        - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+            after an off)
+          action: switch.turn_on
+          target:
+            entity_id:
+            - switch.porch_wall_light_power_switch
+            - switch.walk_porch_light_power_switch
+            - switch.walkway_wall_light_power_switch
+            - switch.left_wall_light_power_switch
+            - switch.center_wall_light_power_switch
+            - switch.right_wall_light_power_switch
+        - action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            brightness: 191
+            transition: 1
+      - delay: 00:00:01
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'Valentines'\n}}"
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              effect: Tenderness
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'St.Patricks'\n}}"
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              effect: Saint Patrick's Day
+        - alias: Family birthdays (Birthday Kid 1/Kid 2/Parent 2 on the holiday calendar)
+          conditions:
+          - condition: template
+            value_template: '{{ is_state(''calendar.holiday_lights_calendar'', ''on'')
+              and holiday_msg.startswith(''Birthday'') }}'
+          sequence:
+          - alias: 'Birthday: rotate Govee Birthday, color chase twinkle and multicolor
+              twinkle every 1 min'
+            action: script.turn_on
+            target:
+              entity_id: script.porch_birthday_cycle
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'Easter'\n}}"
+          sequence:
+          - alias: 'Easter: rotate Tenderness and the multicolor look every 1 min'
+            action: script.turn_on
+            target:
+              entity_id: script.porch_easter_cycle
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'IndependenceDay'\n}}"
+          sequence:
+          - alias: 'Fourth of July: red tops, blue sides, white bottoms (Govee has
+              no July 4 effect)'
+            action: script.turn_on
+            target:
+              entity_id: script.porch_fourth_of_july
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'Halloween'\n}}"
+          sequence:
+          - alias: 'Halloween: rotate the Halloween looks every 1 min (orange, purple,
+              green, red)'
+            action: script.turn_on
+            target:
+              entity_id: script.porch_halloween_cycle
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'Christmas'\n}}"
+          sequence:
+          - alias: 'Christmas: porch follows the eaves'' Christmas Cycle (WLED playlist
+              97/98, 123 effects x 15 s, red/green/gold; user 2026-11-22)'
+            action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.porch_follows_eaves
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg == 'NewYears'\n}}"
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              effect: New Years
+        default:
+        - sequence:
+          - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+              after an off)
+            action: switch.turn_on
+            target:
+              entity_id:
+              - switch.porch_wall_light_power_switch
+              - switch.walk_porch_light_power_switch
+              - switch.walkway_wall_light_power_switch
+              - switch.left_wall_light_power_switch
+              - switch.center_wall_light_power_switch
+              - switch.right_wall_light_power_switch
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              color_temp_kelvin: 4200
+        - sequence:
+          - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+              after an off)
+            action: switch.turn_on
+            target:
+              entity_id:
+              - switch.porch_wall_light_power_switch
+              - switch.walk_porch_light_power_switch
+              - switch.walkway_wall_light_power_switch
+              - switch.left_wall_light_power_switch
+              - switch.center_wall_light_power_switch
+              - switch.right_wall_light_power_switch
+          - alias: Also set color over Matter (Govee can lose some of the lights)
+            action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              color_temp_kelvin: 4200
+        - alias: Normal white look - forget any theme look (porch activity resumes
+            this)
+          action: input_text.set_value
+          target:
+            entity_id: input_text.porch_current_look
+          data:
+            value: ''
+        - alias: Side segments (3 left, 4 right) are RGB-only - warm color that matches
+            the 4200K top/bottom
+          action: light.turn_on
+          target:
+            entity_id:
+            - light.left_wall_light_segment_003
+            - light.left_wall_light_segment_004
+            - light.center_wall_light_segment_003
+            - light.center_wall_light_segment_004
+            - light.right_wall_light_segment_003
+            - light.right_wall_light_segment_004
+            - light.porch_wall_light_segment_003
+            - light.porch_wall_light_segment_004
+            - light.walkway_wall_light_segment_003
+            - light.walkway_wall_light_segment_004
+            - light.walk_porch_light_segment_003
+            - light.walk_porch_light_segment_004
+          data:
+            rgb_color:
+            - 255
+            - 190
+            - 75
+      - choose:
+        - conditions:
+          - condition: template
+            value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+              \   'on'\n  )\n  and holiday_msg != ''\n  and wled_preset in valid_presets\n}}"
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.permanant_lights
+            data:
+              transition: 1
+          - delay: 00:00:01
+          - action: select.select_option
+            target:
+              entity_id: select.permanant_lights_preset
+            data:
+              option: '{{ wled_preset }}'
+        - alias: Holidays whose eave look is a WLED playlist (Halloween)
+          conditions:
+          - condition: template
+            value_template: '{{ is_state(''calendar.holiday_lights_calendar'', ''on'')
+              and holiday_msg != '''' and wled_preset in valid_playlists }}'
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.permanant_lights
+            data:
+              transition: 1
+          - delay: 00:00:01
+          - action: select.select_option
+            target:
+              entity_id: select.permanant_lights_playlist
+            data:
+              option: '{{ wled_preset }}'
+    - conditions:
+      - condition: trigger
+        id: five_minute_check
+      sequence:
+      - choose:
+        - conditions:
+          - condition: state
+            entity_id: sun.sun
+            state: above_horizon
+          sequence:
+          - action: light.turn_off
+            target:
+              entity_id:
+              - light.porch_effect_group
+              - light.permanant_lights
+            data:
+              transition: 1
+          - action: input_text.set_value
+            target:
+              entity_id: input_text.porch_current_look
+            data:
+              value: ''
+        - conditions:
+          - condition: state
+            entity_id: sun.sun
+            state: below_horizon
+          sequence:
+          - variables:
+              porch_was_off: "{{\n  trigger.platform == 'event' or not is_state(\n
+                \   'light.porch_effect_group',\n    'on'\n  )\n}}"
+              normal_night_brightness: "{{\n  191\n  if now().hour >= 12\n  else 77\n}}"
+              required_brightness: "{{\n  255\n  if is_state(\n    'binary_sensor.porch_activity',\n
+                \   'on'\n  )\n  else\n  (\n    191\n    if now().hour >= 12\n    else
+                77\n  )\n}}"
+          - alias: Normal brightness, unless the breathing fade is running (it follows
+              porch_light_target_brightness itself)
+            if:
+            - condition: state
+              entity_id:
+              - script.porch_breathe
+              - script.porch_twinkle
+              state: 'off'
+            then:
+            - sequence:
+              - alias: Power the Govees on over LAN first (govee2mqtt skips power-on
+                  right after an off)
+                action: switch.turn_on
+                target:
+                  entity_id:
+                  - switch.porch_wall_light_power_switch
+                  - switch.walk_porch_light_power_switch
+                  - switch.walkway_wall_light_power_switch
+                  - switch.left_wall_light_power_switch
+                  - switch.center_wall_light_power_switch
+                  - switch.right_wall_light_power_switch
+              - action: light.turn_on
+                target:
+                  entity_id: light.porch_effect_group
+                data:
+                  brightness: '{{ required_brightness }}'
+                  transition: 1
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.porch_light_target_brightness
+            data:
+              value: '{{ normal_night_brightness }}'
+          - choose:
+            - conditions:
+              - condition: template
+                value_template: '{{ porch_was_off }}'
+              sequence:
+              - delay: 00:00:01
+              - choose:
+                - alias: After midnight - no holiday effects, normal white
+                  conditions:
+                  - condition: template
+                    value_template: '{{ now().hour < 12 }}'
+                  sequence:
+                  - sequence:
+                    - alias: Power the Govees on over LAN first (govee2mqtt skips
+                        power-on right after an off)
+                      action: switch.turn_on
+                      target:
+                        entity_id:
+                        - switch.porch_wall_light_power_switch
+                        - switch.walk_porch_light_power_switch
+                        - switch.walkway_wall_light_power_switch
+                        - switch.left_wall_light_power_switch
+                        - switch.center_wall_light_power_switch
+                        - switch.right_wall_light_power_switch
+                    - action: light.turn_on
+                      target:
+                        entity_id: light.porch_effect_group
+                      data:
+                        color_temp_kelvin: 4200
+                  - action: light.turn_on
+                    target:
+                      entity_id:
+                      - light.porch_wall_light_segment_003
+                      - light.porch_wall_light_segment_004
+                      - light.walk_porch_light_segment_003
+                      - light.walk_porch_light_segment_004
+                      - light.walkway_wall_light_segment_003
+                      - light.walkway_wall_light_segment_004
+                      - light.left_wall_light_segment_003
+                      - light.left_wall_light_segment_004
+                      - light.center_wall_light_segment_003
+                      - light.center_wall_light_segment_004
+                      - light.right_wall_light_segment_003
+                      - light.right_wall_light_segment_004
+                    data:
+                      rgb_color:
+                      - 255
+                      - 190
+                      - 75
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'Valentines'\n}}"
+                  sequence:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.porch_effect_group
+                    data:
+                      effect: Tenderness
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'St.Patricks'\n}}"
+                  sequence:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.porch_effect_group
+                    data:
+                      effect: Saint Patrick's Day
+                - alias: Family birthdays (Birthday Kid 1/Kid 2/Parent 2 on the holiday
+                    calendar)
+                  conditions:
+                  - condition: template
+                    value_template: '{{ is_state(''calendar.holiday_lights_calendar'',
+                      ''on'') and holiday_msg.startswith(''Birthday'') }}'
+                  sequence:
+                  - alias: 'Birthday: rotate Govee Birthday, color chase twinkle and
+                      multicolor twinkle every 1 min'
+                    action: script.turn_on
+                    target:
+                      entity_id: script.porch_birthday_cycle
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'Easter'\n}}"
+                  sequence:
+                  - alias: 'Easter: rotate Tenderness and the multicolor look every
+                      1 min'
+                    action: script.turn_on
+                    target:
+                      entity_id: script.porch_easter_cycle
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'IndependenceDay'\n}}"
+                  sequence:
+                  - alias: 'Fourth of July: red tops, blue sides, white bottoms (Govee
+                      has no July 4 effect)'
+                    action: script.turn_on
+                    target:
+                      entity_id: script.porch_fourth_of_july
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'Halloween'\n}}"
+                  sequence:
+                  - alias: 'Halloween: rotate the Halloween looks every 1 min (orange,
+                      purple, green, red)'
+                    action: script.turn_on
+                    target:
+                      entity_id: script.porch_halloween_cycle
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'Christmas'\n}}"
+                  sequence:
+                  - alias: 'Christmas: porch follows the eaves'' Christmas Cycle (WLED
+                      playlist 97/98, 123 effects x 15 s, red/green/gold; user 2026-11-22)'
+                    action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.porch_follows_eaves
+                - conditions:
+                  - condition: template
+                    value_template: "{{\n  is_state(\n    'calendar.holiday_lights_calendar',\n
+                      \   'on'\n  )\n  and holiday_msg == 'NewYears'\n}}"
+                  sequence:
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.porch_effect_group
+                    data:
+                      effect: New Years
+                default:
+                - sequence:
+                  - alias: Power the Govees on over LAN first (govee2mqtt skips power-on
+                      right after an off)
+                    action: switch.turn_on
+                    target:
+                      entity_id:
+                      - switch.porch_wall_light_power_switch
+                      - switch.walk_porch_light_power_switch
+                      - switch.walkway_wall_light_power_switch
+                      - switch.left_wall_light_power_switch
+                      - switch.center_wall_light_power_switch
+                      - switch.right_wall_light_power_switch
+                  - action: light.turn_on
+                    target:
+                      entity_id: light.porch_effect_group
+                    data:
+                      color_temp_kelvin: 4200
+                - sequence:
+                  - alias: Power the Govees on over LAN first (govee2mqtt skips power-on
+                      right after an off)
+                    action: switch.turn_on
+                    target:
+                      entity_id:
+                      - switch.porch_wall_light_power_switch
+                      - switch.walk_porch_light_power_switch
+                      - switch.walkway_wall_light_power_switch
+                      - switch.left_wall_light_power_switch
+                      - switch.center_wall_light_power_switch
+                      - switch.right_wall_light_power_switch
+                  - alias: Also set color over Matter (Govee can lose some of the
+                      lights)
+                    action: light.turn_on
+                    target:
+                      entity_id: light.porch_effect_group
+                    data:
+                      color_temp_kelvin: 4200
+                - alias: Normal white look - forget any theme look (porch activity
+                    resumes this)
+                  action: input_text.set_value
+                  target:
+                    entity_id: input_text.porch_current_look
+                  data:
+                    value: ''
+                - alias: Side segments (3 left, 4 right) are RGB-only - warm color
+                    that matches the 4200K top/bottom
+                  action: light.turn_on
+                  target:
+                    entity_id:
+                    - light.left_wall_light_segment_003
+                    - light.left_wall_light_segment_004
+                    - light.center_wall_light_segment_003
+                    - light.center_wall_light_segment_004
+                    - light.right_wall_light_segment_003
+                    - light.right_wall_light_segment_004
+                    - light.porch_wall_light_segment_003
+                    - light.porch_wall_light_segment_004
+                    - light.walkway_wall_light_segment_003
+                    - light.walkway_wall_light_segment_004
+                    - light.walk_porch_light_segment_003
+                    - light.walk_porch_light_segment_004
+                  data:
+                    rgb_color:
+                    - 255
+                    - 190
+                    - 75
+          - choose:
+            - conditions:
+              - condition: template
+                value_template: '{{ now().hour < 12 }}'
+              - alias: Not while porch activity has the eaves on white
+                condition: state
+                entity_id: input_boolean.porch_activity_override
+                state: 'off'
+              sequence:
+              - action: light.turn_off
+                target:
+                  entity_id: light.permanant_lights
+                data:
+                  transition: 1
+          - choose:
+            - conditions:
+              - condition: template
+                value_template: "{{\n  now().hour >= 12\n  and is_state(\n    'calendar.holiday_lights_calendar',\n
+                  \   'on'\n  )\n  and holiday_msg == 'Christmas'\n}}"
+              sequence:
+              - variables:
+                  fade_time: 1
+                  christmas_variants:
+                  - Christmas
+                  - Christmas1
+                  - Christmas2
+                  - Christmas3
+                  - Christmas4
+                  - Christmas
+
+- id: '1790560000001'
+  alias: Porch Wall Lights - Keep Side Color
+  description: The H7076 porch/walkway wall lights have RGB-only side segments (segment
+    3 = left, 4 = right) that never follow a white/color-temperature setting. Whenever
+    one of the six lights turns on or switches to white (color temp) mode, set its
+    sides to RGB (255,190,75) - tuned 2026-09-27 to match the 4200K top/bottom. Skipped
+    when the light is running a Govee scene/effect, or a holiday is active on the
+    holiday lights calendar (Porch Light Full Smart Control runs holiday effects then).
+    Segment commands go through govee2mqtt (Govee cloud); the triggers use the govee2mqtt
+    LAN entities (Matter dropped 11-22).
+  triggers:
+  - trigger: state
+    entity_id:
+    - light.walkway_wall_light
+    - light.left_wall_light
+    - light.center_wall_light
+    - light.right_wall_light
+    - light.porch_wall_light
+    - light.walk_porch_light
+    from: 'off'
+    to: 'on'
+  - trigger: state
+    entity_id:
+    - light.walkway_wall_light
+    - light.left_wall_light
+    - light.center_wall_light
+    - light.right_wall_light
+    - light.porch_wall_light
+    - light.walk_porch_light
+    attribute: color_mode
+    to: color_temp
+  conditions:
+  - condition: state
+    entity_id: calendar.holiday_lights_calendar
+    state: 'off'
+  - alias: Light is in white (color temp) mode, not a custom color
+    condition: template
+    value_template: '{{ state_attr(trigger.entity_id, ''color_mode'') == ''color_temp''
+      }}'
+  - alias: No Govee scene/effect running
+    condition: template
+    value_template: '{{ state_attr(govee, ''effect'') in [none, ''''] }}'
+  - alias: No picked Porch Look playing (LAN looks own the sides)
+    condition: state
+    entity_id: input_select.porch_look
+    state: Auto
+  actions:
+  - alias: Let the light settle (a scene or other command may follow the turn-on)
+    delay: 00:00:03
+  - condition: template
+    value_template: '{{ is_state(trigger.entity_id, ''on'') and state_attr(trigger.entity_id,
+      ''color_mode'') == ''color_temp'' }}'
+  - alias: Stand aside while a porch theme script is running (they nudge the lights
+      to white for a moment)
+    condition: state
+    entity_id:
+    - script.porch_christmas
+    - script.porch_christmas_multicolor
+    - script.porch_christmas_cycle
+    - script.porch_fourth_of_july
+    - script.porch_cycle_top_bottom
+    - script.porch_holiday_cycle
+    - script.porch_easter_cycle
+    - script.porch_birthday_cycle
+    - script.porch_halloween
+    - script.porch_halloween_multicolor
+    - script.porch_halloween_cycle
+    - script.porch_halloween_candle
+    state: 'off'
+  - action: light.turn_on
+    target:
+      entity_id:
+      - '{{ govee }}_segment_003'
+      - '{{ govee }}_segment_004'
+    data:
+      rgb_color:
+      - 255
+      - 190
+      - 75
+  variables:
+    govee: '{{ trigger.entity_id }}'
+  mode: queued
+  max: 12
+
+- id: '1790560000002'
+  alias: Porch Activity - Base White
+  description: 'Only runs while the porch is standard white: skipped during porch
+    cycle/effect scripts, Govee effects or colored looks (user, 2026-10-11). At night,
+    when someone is in the driveway, front yard, on the porch or at the front door
+    (binary_sensor.porch_activity), stop any porch theme/rotation/breathing and put
+    all six porch wall lights on base white (and the WLED eaves, if on, on warm white
+    255,225,140; their preset is restored afterwards): 4200K at full brightness with
+    the warm (255,190,75) sides. 3 s after activity clears (was 1 min; user 2026-11-22:
+    back to the effects right when the cameras are clear; 3 s rides over brief camera
+    gaps), resume what was running: a holiday/cycle script (input_text.porch_activity_resume,
+    with |script.porch_breathe or |script.porch_twinkle if one was running), else
+    the last static look (input_text.porch_current_look), else the holiday calendar''s
+    Govee effect, else normal white at the porch automation''s target brightness.
+    While Porch Follows Eaves is on, the bridge stream is paused during activity (porch
+    + eaves 4200K) and restarted after.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.porch_activity
+    to: 'on'
+    id: 'on'
+  - trigger: state
+    entity_id: binary_sensor.porch_activity
+    to: 'off'
+    for: 00:00:03
+    id: 'off'
+  - alias: Safety net - a reload/restart cancels the pending 1-minute timer above
+    trigger: time_pattern
+    minutes: /2
+    id: 'off'
+  conditions:
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+  - alias: No picked Porch Look playing
+    condition: state
+    entity_id: input_select.porch_look
+    state: Auto
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: 'on'
+      - condition: state
+        entity_id: light.porch_effect_group
+        state: 'on'
+      - alias: Only when the porch is standard white - not while a holiday/effect
+          show or a colored look is on; those look too good to interrupt (user, 2026-10-11)
+        condition: template
+        value_template: '{{ ([''script.porch_holiday_cycle'', ''script.porch_christmas_cycle'',
+          ''script.porch_easter_cycle'', ''script.porch_halloween_cycle'', ''script.porch_birthday_cycle'',
+          ''script.porch_cycle_top_bottom'', ''script.porch_breathe'', ''script.porch_twinkle'',
+          ''script.porch_color_chase'', ''script.porch_multicolor_twinkle'', ''script.porch_color_chase_twinkle'',
+          ''script.porch_multicolor_breathing'', ''script.porch_halloween_candle'',
+          ''script.porch_halloween_multicolor_twinkle'', ''script.porch_halloween_chase_twinkle'']
+          | select(''is_state'', ''on'') | list | count == 0) and state_attr(''light.porch_effect_group'',
+          ''color_mode'') == ''color_temp'' and ([''light.porch_wall_light'', ''light.walk_porch_light'',
+          ''light.walkway_wall_light'', ''light.left_wall_light'', ''light.center_wall_light'',
+          ''light.right_wall_light''] | map(''state_attr'', ''effect'') | reject(''in'',
+          [none, '''']) | list | count == 0) }}'
+      sequence:
+      - if:
+        - condition: state
+          entity_id: input_boolean.porch_activity_override
+          state: 'off'
+        then:
+        - alias: Remember what to resume (a running rotation, and whether it was breathing)
+          action: input_text.set_value
+          target:
+            entity_id: input_text.porch_activity_resume
+          data:
+            value: '{{ ([''script.porch_christmas_cycle'', ''script.porch_easter_cycle'',
+              ''script.porch_halloween_cycle'', ''script.porch_cycle_top_bottom'',
+              ''script.porch_color_chase'', ''script.porch_birthday_cycle''] | select(''is_state'',
+              ''on'') | first | default('''')) ~ ''|'' ~ ([''script.porch_breathe'',
+              ''script.porch_twinkle''] | select(''is_state'', ''on'') | first | default(''''))
+              }}'
+        - alias: Remember the eave (WLED) preset or playlist ('pl:<name>') if the
+            eaves are on
+          action: input_text.set_value
+          target:
+            entity_id: input_text.permanent_lights_activity_resume
+          data:
+            value: '{% set cur = states(''select.permanant_lights_preset'') %}{% set
+              pl = states(''select.permanant_lights_playlist'') %}{% set pls = state_attr(''select.permanant_lights_playlist'',
+              ''options'') or [] %}{% set msg = state_attr(''calendar.holiday_lights_calendar'',
+              ''message'') | default('''', true) | trim %}{% set hol = ''Birthday''
+              if msg.startswith(''Birthday'') else msg %}{% if not is_state(''light.permanant_lights'',
+              ''on'') %}{% elif pl in pls %}pl:{{ pl }}{% elif cur not in [''unknown'',
+              ''unavailable'', ''''] %}{{ cur }}{% elif is_state(''calendar.holiday_lights_calendar'',
+              ''on'') and hol in (state_attr(''select.permanant_lights_preset'', ''options'')
+              or []) %}{{ hol }}{% elif is_state(''calendar.holiday_lights_calendar'',
+              ''on'') and hol in pls %}pl:{{ hol }}{% endif %}'
+        - action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.porch_activity_override
+      - action: script.turn_off
+        target:
+          entity_id:
+          - script.porch_holiday_cycle
+          - script.porch_christmas_cycle
+          - script.porch_easter_cycle
+          - script.porch_birthday_cycle
+          - script.porch_cycle_top_bottom
+          - script.porch_breathe
+          - script.porch_twinkle
+          - script.porch_color_chase
+          - script.porch_multicolor_twinkle
+          - script.porch_color_chase_twinkle
+          - script.porch_multicolor_breathing
+          - script.porch_christmas_multicolor
+          - script.porch_christmas
+          - script.porch_fourth_of_july
+          - script.porch_halloween_cycle
+          - script.porch_halloween_candle
+          - script.porch_halloween
+          - script.porch_halloween_multicolor
+          - script.porch_halloween_multicolor_twinkle
+          - script.porch_halloween_chase_twinkle
+      - alias: 'Eaves to the normal 4200K white too (user 2026-11-22: ''I like my
+          normal 4200 color everywhere''; was rgb 255,225,140)'
+        action: light.turn_on
+        target:
+          entity_id: light.permanant_lights
+        data:
+          effect: Solid
+          color_temp_kelvin: 4200
+          brightness: 255
+          transition: 1.5
+      - alias: 'Porch Follows Eaves on: pause the bridge stream so the porch takes
+          HA''s 4200K white (stream + HA together flickered)'
+        if:
+        - condition: state
+          entity_id: input_boolean.porch_follows_eaves
+          state: 'on'
+        then:
+        - action: rest_command.porch_eaves_bridge
+          data:
+            action: 'off'
+          continue_on_error: true
+        - delay:
+            seconds: 1
+      - sequence:
+        - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+            after an off)
+          action: switch.turn_on
+          target:
+            entity_id:
+            - switch.porch_wall_light_power_switch
+            - switch.walk_porch_light_power_switch
+            - switch.walkway_wall_light_power_switch
+            - switch.left_wall_light_power_switch
+            - switch.center_wall_light_power_switch
+            - switch.right_wall_light_power_switch
+        - alias: Nudge so Matter re-applies white even if it already reports 4200K
+          action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            color_temp_kelvin: 4000
+            brightness: 255
+      - sequence:
+        - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+            after an off)
+          action: switch.turn_on
+          target:
+            entity_id:
+            - switch.porch_wall_light_power_switch
+            - switch.walk_porch_light_power_switch
+            - switch.walkway_wall_light_power_switch
+            - switch.left_wall_light_power_switch
+            - switch.center_wall_light_power_switch
+            - switch.right_wall_light_power_switch
+        - action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            color_temp_kelvin: 4200
+            brightness: 255
+      - action: light.turn_on
+        target:
+          entity_id:
+          - light.porch_wall_light_segment_003
+          - light.porch_wall_light_segment_004
+          - light.walk_porch_light_segment_003
+          - light.walk_porch_light_segment_004
+          - light.walkway_wall_light_segment_003
+          - light.walkway_wall_light_segment_004
+          - light.left_wall_light_segment_003
+          - light.left_wall_light_segment_004
+          - light.center_wall_light_segment_003
+          - light.center_wall_light_segment_004
+          - light.right_wall_light_segment_003
+          - light.right_wall_light_segment_004
+        data:
+          rgb_color:
+          - 255
+          - 190
+          - 75
+    - conditions:
+      - condition: trigger
+        id: 'off'
+      - condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'on'
+      - condition: state
+        entity_id: binary_sensor.porch_activity
+        state: 'off'
+        for: 00:00:03
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.porch_activity_override
+      - variables:
+          resume: '{{ states(''input_text.porch_activity_resume'').split(''|'')[0]
+            }}'
+          motion: '{{ (states(''input_text.porch_activity_resume'') ~ ''|'').split(''|'')[1]
+            }}'
+          look: '{{ states(''input_text.porch_current_look'') }}'
+          msg: '{{ state_attr(''calendar.holiday_lights_calendar'', ''message'') |
+            default('''', true) | trim }}'
+          evening: '{{ now().hour >= 12 }}'
+          effects:
+            Valentines: Tenderness
+            St.Patricks: Saint Patrick's Day
+            Halloween: Halloween
+            NewYears: New Years
+      - alias: Eaves back to the preset or playlist they were showing (holiday night
+          before midnight), otherwise off
+        if:
+        - condition: template
+          value_template: '{{ evening and states(''input_text.permanent_lights_activity_resume'')
+            not in ['''', ''unknown'', ''unavailable''] }}'
+        then:
+        - if:
+          - condition: template
+            value_template: '{{ states(''input_text.permanent_lights_activity_resume'').startswith(''pl:'')
+              }}'
+          then:
+          - action: light.turn_on
+            target:
+              entity_id: light.permanant_lights
+          - action: select.select_option
+            target:
+              entity_id: select.permanant_lights_playlist
+            data:
+              option: '{{ states(''input_text.permanent_lights_activity_resume'')[3:]
+                }}'
+          else:
+          - action: select.select_option
+            target:
+              entity_id: select.permanant_lights_preset
+            data:
+              option: '{{ states(''input_text.permanent_lights_activity_resume'')
+                }}'
+        else:
+        - alias: They were off (normal night, or after midnight) - off again
+          action: light.turn_off
+          target:
+            entity_id: light.permanant_lights
+          data:
+            transition: 1.5
+      - alias: 'Porch Follows Eaves on: restart the bridge stream (the eaves'' restored
+          playlist drives the porch again)'
+        if:
+        - condition: state
+          entity_id: input_boolean.porch_follows_eaves
+          state: 'on'
+        - condition: state
+          entity_id: sun.sun
+          state: below_horizon
+        then:
+        - delay:
+            seconds: 1
+        - action: rest_command.porch_eaves_bridge
+          data:
+            action: 'on'
+          continue_on_error: true
+      - alias: Porch back to its look over HA - skipped while Porch Follows Eaves
+          is on (the eaves' restored playlist drives the porch)
+        if:
+        - condition: state
+          entity_id: input_boolean.porch_follows_eaves
+          state: 'off'
+        then:
+        - choose:
+          - alias: A rotation was running - restart it
+            conditions:
+            - condition: template
+              value_template: '{{ evening and resume.startswith(''script.'') }}'
+            sequence:
+            - action: script.turn_on
+              target:
+                entity_id: '{{ resume }}'
+            - if:
+              - condition: template
+                value_template: '{{ motion.startswith(''script.'') }}'
+              then:
+              - action: script.turn_on
+                target:
+                  entity_id: '{{ motion }}'
+          - alias: A static look was showing - put it back
+            conditions:
+            - condition: template
+              value_template: '{{ evening and look.startswith(''script.'') }}'
+            sequence:
+            - action: script.turn_on
+              target:
+                entity_id: '{{ look.split('':'')[0] }}'
+              data:
+                variables:
+                  swap: '{{ look.endswith('':swap'') }}'
+            - if:
+              - condition: template
+                value_template: '{{ motion.startswith(''script.'') and not (motion
+                  == ''script.porch_breathe'' and look == ''script.porch_multicolor_breathing'')
+                  }}'
+              then:
+              - alias: Let the look finish before breathing/twinkling again
+                delay: 00:01:00
+              - action: script.turn_on
+                target:
+                  entity_id: '{{ motion }}'
+          - alias: A Govee holiday effect night
+            conditions:
+            - condition: state
+              entity_id: calendar.holiday_lights_calendar
+              state: 'on'
+            - condition: template
+              value_template: '{{ evening and msg in effects }}'
+            sequence:
+            - action: light.turn_on
+              target:
+                entity_id: light.porch_effect_group
+              data:
+                effect: '{{ effects[msg] }}'
+          default:
+          - sequence:
+            - alias: Power the Govees on over LAN first (govee2mqtt skips power-on
+                right after an off)
+              action: switch.turn_on
+              target:
+                entity_id:
+                - switch.porch_wall_light_power_switch
+                - switch.walk_porch_light_power_switch
+                - switch.walkway_wall_light_power_switch
+                - switch.left_wall_light_power_switch
+                - switch.center_wall_light_power_switch
+                - switch.right_wall_light_power_switch
+            - alias: Normal night - back to the porch automation's brightness
+              action: light.turn_on
+              target:
+                entity_id: light.porch_effect_group
+              data:
+                brightness: '{{ states(''input_number.porch_light_target_brightness'')
+                  | int(191) }}'
+  mode: queued
+  max: 5
+
+- id: '1790560000003'
+  alias: Permanent Lights - Follow Porch Brightness
+  description: 'Keeps the WLED eave lights (light.permanant_lights) at exactly the
+    porch wall light group''s brightness (light.porch_effect_group), 1:1, including
+    the motion boost and the midnight dim. Applied when the porch brightness or target
+    changes, when the eaves turn on, and 2 s after a preset loads (presets carry their
+    own brightness). The 2 s delay with mode restart also debounces the constant changes
+    during twinkle/breathing. Earlier version (replaced at the user''s request): 0.335
+    x target, capped at 50%.'
+  triggers:
+  - alias: Follow the porch group's actual brightness 1:1 (user choice 2026-09-27),
+      once it has held for 2 s. Flicker effects (candle, twinkle, breathing) change
+      it several times a second; without the hold this automation ran ~400x/min and
+      flooded the wall panels with state updates (2026-10-11).
+    trigger: state
+    entity_id: light.porch_effect_group
+    attribute: brightness
+    for: 00:00:02
+  - trigger: state
+    entity_id: input_number.porch_light_target_brightness
+  - trigger: state
+    entity_id: light.permanant_lights
+    from: 'off'
+    to: 'on'
+  - trigger: state
+    entity_id: select.permanant_lights_preset
+  conditions:
+  - condition: state
+    entity_id: light.permanant_lights
+    state: 'on'
+  actions:
+  - alias: Let WLED finish loading the preset first
+    delay: 00:00:02
+  - action: light.turn_on
+    target:
+      entity_id: light.permanant_lights
+    data:
+      brightness: '{{ state_attr(''light.porch_effect_group'', ''brightness'') | int(191)
+        }}'
+  mode: restart
+
+- id: '1791700000001'
+  alias: Porch Wall Lights - Auto Power-Cycle When Offline
+  description: 'A Govee H7076 porch wall light that drops off Wi-Fi stays offline
+    until its power is cycled. Offline = its UniFi Wi-Fi client is away (UniFi marks
+    away ~5 min after it disconnects) for 1+ min while its switch has been on 4+ min.
+    Then turn that switch off for 6 s (light.carriage = Walkway/Left/Center/Right,
+    switch.porch = Porch, Shelly 1 .107), wait for the lights to rejoin Wi-Fi, restart
+    govee2mqtt if any are still away, then put the porch look back. Skips if all six
+    are away (network/UniFi problem), within 15 min of an HA start, and runs at most
+    once every 30 min. Walk/Porch is breaker-only: see "Porch Wall Lights - Walk/Porch
+    Offline Alert". Switched from Matter unavailable to UniFi trackers 11-22 (Matter
+    being removed from the lights).'
+  triggers:
+  - trigger: state
+    entity_id:
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_01
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_02
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_03
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_04
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_05
+    to: not_home
+    for: 00:01:00
+  - alias: Safety net - catches outages that began before a restart/reload
+    trigger: time_pattern
+    minutes: /5
+  conditions:
+  - alias: Something to do
+    condition: template
+    value_template: '{{ cycle_carriage or cycle_porch }}'
+  - alias: Not every porch light away at once (that's the network or UniFi)
+    condition: template
+    value_template: '{{ [''device_tracker.unifi_default_aa_bb_cc_dd_ee_01'', ''device_tracker.unifi_default_aa_bb_cc_dd_ee_02'',
+      ''device_tracker.unifi_default_aa_bb_cc_dd_ee_03'', ''device_tracker.unifi_default_aa_bb_cc_dd_ee_04'',
+      ''device_tracker.unifi_default_aa_bb_cc_dd_ee_05'', ''device_tracker.unifi_default_aa_bb_cc_dd_ee_06'']
+      | select(''is_state'', ''not_home'') | list | count < 6 }}'
+  - alias: HA has been up 15+ min
+    condition: template
+    value_template: '{{ (now() - as_datetime(states(''sensor.uptime''))).total_seconds()
+      > 900 }}'
+  - alias: At most once every 30 min
+    condition: template
+    value_template: '{{ this.attributes.last_triggered is none or (now() - this.attributes.last_triggered).total_seconds()
+      > 1800 }}'
+  actions:
+  - variables:
+      switches: '{{ ([''light.carriage''] if cycle_carriage else []) + ([''switch.porch'']
+        if cycle_porch else []) }}'
+  - action: homeassistant.turn_off
+    target:
+      entity_id: '{{ switches }}'
+  - alias: 6 s off is enough (user, 2026-10-11)
+    delay: 00:00:06
+  - action: homeassistant.turn_on
+    target:
+      entity_id: '{{ switches }}'
+  - alias: Wait up to 3 min for the stale lights to rejoin Wi-Fi
+    wait_template: '{{ stale | select(''is_state'', ''not_home'') | list | count ==
+      0 }}'
+    timeout: 00:03:00
+  - variables:
+      still_down: '{% set ns = namespace(l=[]) %}{% for e in stale if is_state(e,
+        ''not_home'') %}{% set ns.l = ns.l + [names_map[e]] %}{% endfor %}{{ ns.l
+        | join('', '') }}'
+  - alias: Restart govee2mqtt after every power cycle - it doesn't reconnect to a
+      light that was offline until restarted, and it is now the only control path
+      (Matter reload removed 11-22)
+    if:
+    - condition: template
+      value_template: '{{ true }}'
+    then:
+    - action: hassio.addon_restart
+      data:
+        addon: b9845f46_govee2mqtt
+    - delay: 00:01:30
+  - alias: Put the porch look back (a running cycle repaints on its own next step)
+    if:
+    - condition: template
+      value_template: '{{ is_state(''sun.sun'', ''below_horizon'') and is_state(''input_boolean.porch_activity_override'',
+        ''off'') and is_state(''light.porch_effect_group'', ''on'') and states(''input_text.porch_current_look'').startswith(''script.'')
+        and ([''script.porch_holiday_cycle'', ''script.porch_christmas_cycle'', ''script.porch_easter_cycle'',
+        ''script.porch_halloween_cycle'', ''script.porch_cycle_top_bottom'', ''script.porch_birthday_cycle'']
+        | select(''is_state'', ''on'') | list | count == 0) }}'
+    then:
+    - action: script.turn_on
+      target:
+        entity_id: '{{ states(''input_text.porch_current_look'').split('':'')[0] }}'
+      data:
+        variables:
+          swap: '{{ states(''input_text.porch_current_look'').endswith('':swap'')
+            }}'
+  - action: notify.mobile_app_parent1_phone
+    data:
+      title: Porch lights power-cycled
+      message: '{{ names }} went offline; cycled {{ switches | join('' + '') }} and
+        restarted govee2mqtt. {{ (''Still offline: '' ~ still_down ~ '' (may need
+        the breaker or re-adding in the Govee app).'') if still_down else ''All back
+        online.'' }}'
+  variables:
+    names_map:
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_01: walkway
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_02: left
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_03: center
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_04: right
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_05: porch
+      device_tracker.unifi_default_aa_bb_cc_dd_ee_06: walk_porch
+    carriage_lights:
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_01
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_02
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_03
+    - device_tracker.unifi_default_aa_bb_cc_dd_ee_04
+    stale: '{% set ns = namespace(l=[]) %}{% for e in ["device_tracker.unifi_default_aa_bb_cc_dd_ee_01",
+      "device_tracker.unifi_default_aa_bb_cc_dd_ee_02", "device_tracker.unifi_default_aa_bb_cc_dd_ee_03",
+      "device_tracker.unifi_default_aa_bb_cc_dd_ee_04", "device_tracker.unifi_default_aa_bb_cc_dd_ee_05"]
+      %}{% if is_state(e, ''not_home'') and (now() - states[e].last_changed).total_seconds()
+      > 60 %}{% set ns.l = ns.l + [e] %}{% endif %}{% endfor %}{{ ns.l }}'
+    cycle_carriage: "{{ (stale | select('in', carriage_lights) | list | count > 0)\n
+      \ and is_state('light.carriage', 'on') and (now() - states.light.carriage.last_changed).total_seconds()\n
+      \ > 240 }}"
+    cycle_porch: '{{ ''device_tracker.unifi_default_aa_bb_cc_dd_ee_05'' in stale and
+      is_state(''switch.porch'', ''on'') and (now() - states.switch.porch.last_changed).total_seconds()
+      > 240 }}'
+    names: '{% set ns = namespace(l=[]) %}{% for e in stale %}{% set ns.l = ns.l +
+      [names_map[e]] %}{% endfor %}{{ ns.l | join('', '') }}'
+  mode: single
+
+- id: '1791700000002'
+  alias: Porch Wall Lights - Walk/Porch Offline Alert
+  description: The Walk/Porch H7076 has no switch, only a breaker, so it can't be
+    power-cycled from HA. Notify when its UniFi Wi-Fi client has been away 10 min
+    (~15 min offline incl. UniFi's 5 min away delay; not right after an HA start,
+    and not when all six are away). Switched from Matter to UniFi 11-22.
+  triggers:
+  - trigger: state
+    entity_id: device_tracker.unifi_default_aa_bb_cc_dd_ee_06
+    to: not_home
+    for: 00:10:00
+  conditions:
+  - condition: template
+    value_template: '{{ (now() - as_datetime(states(''sensor.uptime''))).total_seconds()
+      > 900 }}'
+  - condition: template
+    value_template: '{{ [''device_tracker.unifi_default_aa_bb_cc_dd_ee_01'', ''device_tracker.unifi_default_aa_bb_cc_dd_ee_02'',
+      ''device_tracker.unifi_default_aa_bb_cc_dd_ee_03'', ''device_tracker.unifi_default_aa_bb_cc_dd_ee_04'',
+      ''device_tracker.unifi_default_aa_bb_cc_dd_ee_05''] | select(''is_state'', ''not_home'')
+      | list | count < 5 }}'
+  actions:
+  - action: notify.mobile_app_parent1_phone
+    data:
+      title: Walk/Porch light offline
+      message: The Walk/Porch wall light has been offline 15 min. It only power-cycles
+        at the breaker (off 30 s, on), then restart govee2mqtt.
+  mode: single
+
+- id: '1792200000001'
+  alias: Porch Wall Switch - Toggle Porch and Eave Lights
+  description: The Porch wall switch (Shelly 1 .107, detached; its relay stays on
+    to power the Porch Govee) toggles the outside lights. If any porch wall light
+    (light.porch_effect_group) or the eaves (light.permanant_lights) are on, it stops
+    any running porch theme and turns them all off, and sets input_boolean.porch_manual_off
+    so Porch Light Full Smart Control's 5-minute check doesn't turn them back on.
+    If all are off, it clears the flag, makes sure the Carriage and Porch relays are
+    powering the Govees, and turns the porch on (normal white at the target brightness)
+    and, only during a holiday (holiday lights calendar on), the eaves. Sunrise and
+    sunset clear the flag; it is only set at night. Triggers on either the input's
+    on/off (toggle switch) or a press event (momentary); mode single + 2 s hold so
+    one flip can't toggle twice.
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.porch_switch_input
+    from:
+    - 'on'
+    - 'off'
+    to:
+    - 'on'
+    - 'off'
+    id: toggle
+  - trigger: state
+    entity_id: event.porch_switch_input
+    not_from:
+    - unavailable
+    - unknown
+    id: toggle
+  - trigger: sun
+    event: sunrise
+    id: sunrise
+  - alias: Sunset turns the porch on anyway, so the evening starts with the flag clear
+      (a daytime flip would otherwise block the 5-min check all night)
+    trigger: sun
+    event: sunset
+    id: sunrise
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: sunrise
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.porch_manual_off
+    - conditions:
+      - condition: or
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'on'
+        - condition: state
+          entity_id: light.permanant_lights
+          state: 'on'
+      sequence:
+      - alias: Only at night - in the day Smart Control turns them off anyway
+        if:
+        - condition: state
+          entity_id: sun.sun
+          state: below_horizon
+        then:
+        - action: input_boolean.turn_on
+          target:
+            entity_id: input_boolean.porch_manual_off
+      - action: script.turn_off
+        target:
+          entity_id:
+          - script.porch_holiday_cycle
+          - script.porch_christmas_cycle
+          - script.porch_easter_cycle
+          - script.porch_birthday_cycle
+          - script.porch_halloween_cycle
+          - script.porch_cycle_top_bottom
+          - script.porch_breathe
+          - script.porch_twinkle
+          - script.porch_color_chase
+          - script.porch_multicolor_twinkle
+          - script.porch_color_chase_twinkle
+          - script.porch_multicolor_breathing
+          - script.porch_christmas_multicolor
+          - script.porch_christmas
+          - script.porch_fourth_of_july
+          - script.porch_halloween_candle
+          - script.porch_halloween
+          - script.porch_halloween_multicolor
+          - script.porch_halloween_multicolor_twinkle
+          - script.porch_halloween_chase_twinkle
+      - action: light.turn_off
+        target:
+          entity_id:
+          - light.porch_effect_group
+          - light.permanant_lights
+        data:
+          transition: 1
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.porch_current_look
+        data:
+          value: ''
+    default:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.porch_manual_off
+    - alias: Make sure the Govees have power
+      action: homeassistant.turn_on
+      target:
+        entity_id:
+        - light.carriage
+        - switch.porch
+    - sequence:
+      - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right
+          after an off)
+        action: switch.turn_on
+        target:
+          entity_id:
+          - switch.porch_wall_light_power_switch
+          - switch.walk_porch_light_power_switch
+          - switch.walkway_wall_light_power_switch
+          - switch.left_wall_light_power_switch
+          - switch.center_wall_light_power_switch
+          - switch.right_wall_light_power_switch
+      - action: light.turn_on
+        target:
+          entity_id: light.porch_effect_group
+        data:
+          color_temp_kelvin: 4200
+          brightness: '{{ states(''input_number.porch_light_target_brightness'') |
+            int(191) }}'
+          transition: 1
+    - alias: Eaves only during a holiday (holiday lights calendar on)
+      if:
+      - condition: state
+        entity_id: calendar.holiday_lights_calendar
+        state: 'on'
+      then:
+      - action: light.turn_on
+        target:
+          entity_id: light.permanant_lights
+  - delay: 00:00:02
+  mode: single
+  max_exceeded: silent
+
+- id: '1792400000001'
+  alias: Back Porch Shellys - Auto Power-Cycle When Offline
+  description: If the Back Porch or Grill Light Shelly is unavailable for 5 minutes,
+    cut power with the Leviton D215S relay (Matter light.back_porch_switch) for 10
+    seconds, then restore. At most once per hour.
+  triggers:
+  - trigger: state
+    entity_id:
+    - light.back_porch
+    - light.grill_light
+    to: unavailable
+    for: 00:05:00
+  conditions:
+  - condition: template
+    value_template: '{{ this.attributes.last_triggered is none or (now() - this.attributes.last_triggered).total_seconds()
+      > 3600 }}'
+  - condition: state
+    entity_id: light.back_porch_switch
+    state: 'on'
+  actions:
+  - action: light.turn_off
+    target:
+      entity_id: light.back_porch_switch
+  - delay: 00:00:10
+  - action: light.turn_on
+    target:
+      entity_id: light.back_porch_switch
+  - action: logbook.log
+    data:
+      name: Back Porch Shellys
+      message: power-cycled via Leviton relay ({{ trigger.to_state.name }} was unavailable)
+  mode: single
+  max_exceeded: silent
+
+- id: '1792400000002'
+  alias: Back Porch - Leviton Paddle Follows Shelly Light
+  description: Keeps the Leviton paddle/LED (cloud entity light.back_porch_switch1)
+    matching the Shelly Back Porch light. In Smart Bulb Mode this does not touch the
+    relay (Matter light.back_porch_switch). The Sliding Door automation only reacts
+    to the paddle when it disagrees with the light, so this cannot echo.
+  triggers:
+  - trigger: state
+    entity_id: light.back_porch
+    to:
+    - 'on'
+    - 'off'
+    not_from:
+    - unavailable
+    - unknown
+  conditions:
+  - condition: template
+    value_template: '{{ states(''light.back_porch_switch1'') in [''on'',''off''] and
+      states(''light.back_porch_switch1'') != trigger.to_state.state }}'
+  actions:
+  - action: light.turn_{{ trigger.to_state.state }}
+    target:
+      entity_id: light.back_porch_switch1
+  mode: queued
+  max: 3
+
+- id: '1791700000003'
+  alias: Porch - Resume Holiday Look After HA Restart
+  description: An HA restart kills the running porch holiday cycle script and nothing
+    restarted it (10-27 Walk/Porch went white). Two minutes after startup, if it is
+    evening (sunset to midnight), the holiday calendar is on and no porch cycle is
+    running, start the holiday's look again.
+  triggers:
+  - trigger: homeassistant
+    event: start
+  conditions:
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+  - condition: template
+    value_template: '{{ now().hour >= 12 }}'
+  - condition: state
+    entity_id: calendar.holiday_lights_calendar
+    state: 'on'
+  actions:
+  - delay: 00:02:00
+  - alias: Re-check after Matter/govee2mqtt have come back
+    condition: template
+    value_template: "{{ now().hour >= 12 and is_state('light.porch_effect_group',
+      'on')\n   and is_state('input_boolean.porch_manual_off', 'off')\n   and is_state('input_boolean.porch_activity_override',
+      'off')\n   and states.script | selectattr('entity_id', 'search', '^script\\.porch_')\n
+      \      | selectattr('state', 'eq', 'on') | list | count == 0 }}"
+  - variables:
+      holiday_msg: '{{ state_attr(''calendar.holiday_lights_calendar'', ''message'')
+        or '''' }}'
+  - choose:
+    - conditions: '{{ holiday_msg == ''Halloween'' }}'
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: script.porch_halloween_cycle
+    - conditions: '{{ holiday_msg == ''Christmas'' }}'
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: script.porch_christmas_cycle
+    - conditions: '{{ holiday_msg == ''Easter'' }}'
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: script.porch_easter_cycle
+    - conditions: '{{ holiday_msg.startswith(''Birthday'') }}'
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: script.porch_birthday_cycle
+    - conditions: '{{ holiday_msg == ''IndependenceDay'' }}'
+      sequence:
+      - action: script.turn_on
+        target:
+          entity_id: script.porch_fourth_of_july
+    - conditions: '{{ holiday_msg == ''Valentines'' }}'
+      sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.porch_effect_group
+        data:
+          effect: Tenderness
+    - conditions: '{{ holiday_msg == ''St.Patricks'' }}'
+      sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.porch_effect_group
+        data:
+          effect: Saint Patrick's Day
+    - conditions: '{{ holiday_msg == ''NewYears'' }}'
+      sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.porch_effect_group
+        data:
+          effect: New Years
+  mode: single
+
+- id: '1794592748940'
+  alias: Porch Look - Apply
+  description: Plays the picked input_select.porch_look on the 6 H7076 wall lights
+    over LAN (/config/govee_tools/porch_looks.py). Stops the cloud/Matter porch_*
+    scripts first. Picking Auto by hand stops the look and switches the porch off
+    so the 5-minute check restores the normal/holiday look. Built 2026-11-13.
+  triggers:
+  - trigger: state
+    entity_id: input_select.porch_look
+    not_to:
+    - unavailable
+    - unknown
+    not_from:
+    - unavailable
+    - unknown
+  actions:
+  - choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.state != ''Auto'' }}'
+      sequence:
+      - action: script.turn_off
+        target:
+          entity_id:
+          - script.porch_holiday_cycle
+          - script.porch_christmas_cycle
+          - script.porch_easter_cycle
+          - script.porch_birthday_cycle
+          - script.porch_cycle_top_bottom
+          - script.porch_breathe
+          - script.porch_twinkle
+          - script.porch_color_chase
+          - script.porch_multicolor_twinkle
+          - script.porch_color_chase_twinkle
+          - script.porch_multicolor_breathing
+          - script.porch_christmas_multicolor
+          - script.porch_christmas
+          - script.porch_fourth_of_july
+          - script.porch_halloween_cycle
+          - script.porch_halloween_candle
+          - script.porch_halloween
+          - script.porch_halloween_multicolor
+          - script.porch_halloween_multicolor_twinkle
+          - script.porch_halloween_chase_twinkle
+        continue_on_error: true
+      - action: shell_command.porch_look
+        data:
+          look: '{{ trigger.to_state.state | lower | replace('' '', ''_'') }}'
+          bri: '{{ ((states(''input_number.porch_light_target_brightness'') | float(191))
+            / 255 * 100) | round(0) | int if is_state(''sun.sun'', ''below_horizon'')
+            else 100 }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ trigger.to_state.context.parent_id is none }}'
+      sequence:
+      - alias: Stop the look and power all six off over LAN (instant; Matter off can
+          hang ~40 s)
+        action: shell_command.porch_look
+        data:
+          look: 'off'
+      - alias: Porch off over Matter too so HA state matches; at night the 5-minute
+          check sees it off and restores the normal/holiday look
+        action: light.turn_off
+        target:
+          entity_id: light.porch_effect_group
+        continue_on_error: true
+      - alias: At night ask the smart control to restore the normal/holiday look right
+          away (it treats this like a 5-minute check with the porch off)
+        if:
+        - condition: state
+          entity_id: sun.sun
+          state: below_horizon
+        then:
+        - delay: 00:00:02
+        - event: porch_look_auto_resume
+    default:
+    - action: shell_command.porch_look
+      data:
+        look: stop
+  mode: queued
+
+- id: '1794592751729'
+  alias: Porch Look - Back to Auto
+  description: 'Ends a picked porch look at midnight (user rule: themes only until
+    the midnight dim), at sunrise, and when the porch wall switch turns the porch
+    off. Sets input_select.porch_look to Auto and stops the LAN looks; the smart control
+    then takes over. Built 2026-11-13.'
+  triggers:
+  - trigger: time
+    at: 00:00:00
+  - trigger: sun
+    event: sunrise
+  - trigger: state
+    entity_id: input_boolean.porch_manual_off
+    to: 'on'
+  conditions:
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: input_select.porch_look
+      state: Auto
+  actions:
+  - action: shell_command.porch_look
+    data:
+      look: stop
+  - action: input_select.select_option
+    target:
+      entity_id: input_select.porch_look
+    data:
+      option: Auto
+  - if:
+    - condition: state
+      entity_id: input_boolean.porch_manual_off
+      state: 'on'
+    then:
+    - delay: 1
+    - action: light.turn_off
+      target:
+        entity_id: light.porch_effect_group
+  mode: single
+
+- id: '1794593100212'
+  alias: Porch Look - White for Arrivals From the Street
+  description: 'User rule 2026-11-13: while a picked Porch Look plays at night, a
+    person coming IN from the street switches the porch (and since 11-15 the eaves)
+    to bright white; someone leaving the house keeps the colors. 11-15 rewrite: at
+    night the Frigate (Coral) Driveway cam first sees arrivals already inside driveway_inner
+    and only tags driveway_street as it loses them, so zone order cannot tell the
+    direction. Now: the first time a track enters driveway_inner fires, unless someone
+    just came out of the house (front door, doorbell/front-door person, garage entry
+    door or a front garage door in the last 3 min). Coming back in after reaching
+    driveway_street in the same track always fires. Resumes the look 2 min after Frigate''s
+    driveway person occupancy clears.'
+  triggers:
+  - trigger: mqtt
+    topic: frigate_coral/events
+  conditions:
+  - alias: Driveway person stepping into driveway_inner - back in from the street
+      (same track), or a first entry when nobody just came out of the house
+    condition: template
+    value_template: '{% set a = trigger.payload_json.after | default({}) %}{% set
+      b = trigger.payload_json.before | default({}) %}{% set z = a.entered_zones |
+      default([]) %}{% set bez = b.entered_zones | default([]) %}{% set cz = a.current_zones
+      | default([]) %}{% set bz = b.current_zones | default([]) %}{% set ns = namespace(left=false)
+      %}{% for e in [''binary_sensor.doorbell_human'', ''binary_sensor.front_door_person'',
+      ''binary_sensor.front_door'', ''binary_sensor.garage_door'', ''cover.big_garage'',
+      ''cover.little_garage''] %}{% if states(e) in [''on'', ''open'', ''opening'',
+      ''closing''] or (states[e] is not none and (now() - states[e].last_changed).total_seconds()
+      < 180) %}{% set ns.left = true %}{% endif %}{% endfor %}{% set back_in = ''driveway_inner''
+      in cz and ''driveway_inner'' not in bz and ''driveway_street'' in bez %}{% set
+      first_in = ''driveway_inner'' in z and ''driveway_inner'' not in bez and not
+      ns.left %}{{ a.camera == ''driveway'' and a.label == ''person'' and not (a.false_positive
+      | default(false)) and (back_in or first_in) }}'
+  - condition: not
+    conditions:
+    - condition: state
+      entity_id: input_select.porch_look
+      state: Auto
+  - condition: state
+    entity_id: sun.sun
+    state: below_horizon
+  actions:
+  - variables:
+      look: '{{ states(''input_select.porch_look'') }}'
+  - alias: Remember the eaves ('arr:' + '' when off, 'pl:<playlist>' or the preset)
+      - only on the first arrival, so a restart mid-arrival keeps the original
+    if:
+    - condition: template
+      value_template: '{{ not states(''input_text.permanent_lights_activity_resume'').startswith(''arr:'')
+        }}'
+    then:
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.permanent_lights_activity_resume
+      data:
+        value: '{% set cur = states(''select.permanant_lights_preset'') %}{% set pl
+          = states(''select.permanant_lights_playlist'') %}{% set pls = state_attr(''select.permanant_lights_playlist'',
+          ''options'') or [] %}arr:{% if not is_state(''light.permanant_lights'',
+          ''on'') %}{% elif pl in pls %}pl:{{ pl }}{% elif cur not in [''unknown'',
+          ''unavailable'', ''''] %}{{ cur }}{% endif %}'
+  - alias: Eaves to warm white with the wall lights (same as Porch Activity - Base
+      White; user 2026-11-15)
+    action: light.turn_on
+    target:
+      entity_id: light.permanant_lights
+    data:
+      effect: Solid
+      rgb_color:
+      - 255
+      - 225
+      - 140
+      brightness: 255
+      transition: 1.5
+    continue_on_error: true
+  - action: shell_command.porch_look
+    data:
+      look: stop
+  - sequence:
+    - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right after
+        an off)
+      action: switch.turn_on
+      target:
+        entity_id:
+        - switch.porch_wall_light_power_switch
+        - switch.walk_porch_light_power_switch
+        - switch.walkway_wall_light_power_switch
+        - switch.left_wall_light_power_switch
+        - switch.center_wall_light_power_switch
+        - switch.right_wall_light_power_switch
+    - action: light.turn_on
+      target:
+        entity_id: light.porch_effect_group
+      data:
+        color_temp_kelvin: 4000
+        brightness: 255
+      continue_on_error: true
+  - sequence:
+    - alias: Power the Govees on over LAN first (govee2mqtt skips power-on right after
+        an off)
+      action: switch.turn_on
+      target:
+        entity_id:
+        - switch.porch_wall_light_power_switch
+        - switch.walk_porch_light_power_switch
+        - switch.walkway_wall_light_power_switch
+        - switch.left_wall_light_power_switch
+        - switch.center_wall_light_power_switch
+        - switch.right_wall_light_power_switch
+    - action: light.turn_on
+      target:
+        entity_id: light.porch_effect_group
+      data:
+        color_temp_kelvin: 4200
+        brightness: 255
+      continue_on_error: true
+  - action: light.turn_on
+    target:
+      entity_id:
+      - light.porch_wall_light_segment_003
+      - light.porch_wall_light_segment_004
+      - light.walk_porch_light_segment_003
+      - light.walk_porch_light_segment_004
+      - light.walkway_wall_light_segment_003
+      - light.walkway_wall_light_segment_004
+      - light.left_wall_light_segment_003
+      - light.left_wall_light_segment_004
+      - light.center_wall_light_segment_003
+      - light.center_wall_light_segment_004
+      - light.right_wall_light_segment_003
+      - light.right_wall_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 190
+      - 75
+    continue_on_error: true
+  - alias: Wait for Frigate's driveway person occupancy to clear (a new arrival restarts
+      this)
+    wait_template: '{{ is_state(''binary_sensor.driveway_person_occupancy'', ''off'')
+      }}'
+    timeout: 00:20:00
+  - delay: 00:02:00
+  - variables:
+      eaves: '{{ states(''input_text.permanent_lights_activity_resume'')[4:] }}'
+  - alias: Eaves back to what they showed before the arrival (off, playlist or preset)
+    choose:
+    - conditions:
+      - condition: template
+        value_template: '{{ eaves.startswith(''pl:'') }}'
+      sequence:
+      - action: light.turn_on
+        target:
+          entity_id: light.permanant_lights
+      - action: select.select_option
+        target:
+          entity_id: select.permanant_lights_playlist
+        data:
+          option: '{{ eaves[3:] }}'
+    - conditions:
+      - condition: template
+        value_template: '{{ eaves != '''' }}'
+      sequence:
+      - action: select.select_option
+        target:
+          entity_id: select.permanant_lights_preset
+        data:
+          option: '{{ eaves }}'
+    default:
+    - action: light.turn_off
+      target:
+        entity_id: light.permanant_lights
+      data:
+        transition: 1.5
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.permanent_lights_activity_resume
+    data:
+      value: ''
+  - condition: template
+    value_template: '{{ states(''input_select.porch_look'') == look and look != ''Auto''
+      }}'
+  - action: shell_command.porch_look
+    data:
+      look: '{{ look | lower | replace('' '', ''_'') }}'
+      bri: '{{ ((states(''input_number.porch_light_target_brightness'') | float(191))
+        / 255 * 100) | round(0) | int }}'
+  mode: restart
+
+- id: '1794600000001'
+  alias: Porch Follows Eaves - Apply
+  description: '2026-11-22. Turns the Synology WLED->Govee bridge on/off with input_boolean.porch_follows_eaves.
+    Night only. Off: stop the stream, then restore the normal porch look (night) or
+    turn the porch off (day). Re-sends ''on'' every 5 min and at HA start in case
+    the bridge container restarted (it starts disabled).'
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.porch_follows_eaves
+    to: 'on'
+    id: 'on'
+  - trigger: state
+    entity_id: input_boolean.porch_follows_eaves
+    to: 'off'
+    id: 'off'
+  - trigger: homeassistant
+    event: start
+    id: resync
+  - trigger: time_pattern
+    minutes: /5
+    id: resync
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id:
+        - 'on'
+        - resync
+      - condition: state
+        entity_id: input_boolean.porch_follows_eaves
+        state: 'on'
+      - alias: Not while Porch Activity holds the porch white (it pauses the stream
+          itself)
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      sequence:
+      - if:
+        - condition: state
+          entity_id: sun.sun
+          state: above_horizon
+        then:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.porch_follows_eaves
+        else:
+        - action: rest_command.porch_eaves_bridge
+          data:
+            action: 'on'
+          continue_on_error: true
+        - alias: Porch glow between effects = 30% warm (user 2026-11-22); re-sent
+            so a bridge restart can't fall back to its default
+          action: rest_command.porch_eaves_bridge
+          data:
+            action: floor?pct=30&rgb=ffbe4b
+          continue_on_error: true
+    - conditions:
+      - condition: trigger
+        id: 'off'
+      sequence:
+      - action: rest_command.porch_eaves_bridge
+        data:
+          action: 'off'
+        continue_on_error: true
+      - delay:
+          seconds: 1
+      - if:
+        - condition: state
+          entity_id: sun.sun
+          state: below_horizon
+        - condition: state
+          entity_id: input_boolean.porch_manual_off
+          state: 'off'
+        then:
+        - event: porch_look_auto_resume
+        else:
+        - action: light.turn_off
+          target:
+            entity_id: light.porch_effect_group
+  mode: queued
+
+- id: '1794600000002'
+  alias: Porch Follows Eaves - Safety Off
+  description: '2026-11-22. The bridge stream overrides HA''s porch commands (11-22
+    sunrise test: 4 lights ignored ''off''), so turn Porch Follows Eaves off first
+    whenever the porch or eaves should go off: sunrise, eaves off, porch turned off,
+    porch manual off.'
+  triggers:
+  - trigger: sun
+    event: sunrise
+  - trigger: state
+    entity_id: sun.sun
+    to: above_horizon
+  - trigger: state
+    entity_id: light.permanant_lights
+    to: 'off'
+  - trigger: state
+    entity_id: light.porch_effect_group
+    to: 'off'
+  - trigger: state
+    entity_id: input_boolean.porch_manual_off
+    to: 'on'
+  conditions:
+  - condition: state
+    entity_id: input_boolean.porch_follows_eaves
+    state: 'on'
+  actions:
+  - action: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.porch_follows_eaves
+  mode: single
+
+- id: '1795401452771'
+  alias: Porch Govee Scene - Apply
+  description: 'Plays the picked input_select.porch_govee_scene (Govee''s 77 built-in
+    H7076 scenes + custom ones like ''Blue & White'', /config/govee_tools/h7076_effects.json)
+    on all six porch wall lights over LAN: shell_command.porch_look look=govee:<name>
+    (porch_looks.py -> govee_scene.py; remembers the scene in .porch_govee_scene;
+    Right/Center get a head start). At NIGHT the eaves (WLED .201) also twinkle in
+    the scene''s colors (Colortwinkles; their prior state is saved once in .eaves_saved.json);
+    by day the look gets ''__day'' so the eaves are untouched. Then sets input_select.porch_look
+    to ''Govee Scene'' so Smart Control / Keep Side Color leave the lights alone and
+    Porch Look - Apply, arrival restore and resume-after-restart replay it (look govee_scene,
+    eaves included). When Porch Look moves off ''Govee Scene'', the eaves are restored
+    (look eaves_restore: only if they still show the scene twinkle) and this picker
+    resets to ''—''. Built 2026-11-22.'
+  triggers:
+  - trigger: state
+    entity_id: input_select.porch_govee_scene
+    id: pick
+    not_to:
+    - —
+    - unavailable
+    - unknown
+  - trigger: state
+    entity_id: input_select.porch_look
+    from: Govee Scene
+    id: look_changed
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: pick
+      sequence:
+      - action: shell_command.porch_look
+        data:
+          look: govee:{{ trigger.to_state.state | regex_replace('[^A-Za-z0-9]+', '_')
+            }}{{ '' if is_state('sun.sun', 'below_horizon') else '__day' }}
+          bri: '{{ ((states(''input_number.porch_light_target_brightness'') | float(191))
+            / 255 * 100) | round(0) | int if is_state(''sun.sun'', ''below_horizon'')
+            else 100 }}'
+      - action: input_select.select_option
+        target:
+          entity_id: input_select.porch_look
+        data:
+          option: Govee Scene
+    - conditions:
+      - condition: trigger
+        id: look_changed
+      sequence:
+      - action: shell_command.porch_look
+        data:
+          look: eaves_restore
+        continue_on_error: true
+      - if:
+        - condition: not
+          conditions:
+          - condition: state
+            entity_id: input_select.porch_govee_scene
+            state: —
+        then:
+        - action: input_select.select_option
+          target:
+            entity_id: input_select.porch_govee_scene
+          data:
+            option: —
+  mode: queued
+

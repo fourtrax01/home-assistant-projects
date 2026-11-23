@@ -1,0 +1,197 @@
+
+esphome:
+  name: hvac-zone-controller
+  friendly_name: HVAC Zone Controller
+  name_add_mac_suffix: false
+
+  # FAIL-OPEN STARTUP (actuators are RA: 0V = fully open).
+  # Priority 200 runs after the I2C bus and both GP8403 DACs have set up
+  # (bus/hardware/data priorities are all higher). Writes 0V to the DAC
+  # hardware directly, then syncs the HA sliders to 100% open.
+  # Template numbers do not call set_action for initial_value, so the
+  # explicit output writes below are what actually drive the DACs.
+  on_boot:
+    priority: 200
+    then:
+      - lambda: |-
+          if (id(dac_1).is_failed()) ESP_LOGE("damper", "GP8403 0x5E failed setup - dampers 1/2 not driven");
+          if (id(dac_2).is_failed()) ESP_LOGE("damper", "GP8403 0x5F failed setup - dampers 3/4 not driven");
+      - output.set_level: { id: damper_output_1, level: 0% }
+      - output.set_level: { id: damper_output_2, level: 0% }
+      - output.set_level: { id: damper_output_3, level: 0% }
+      - output.set_level: { id: damper_output_4, level: 0% }
+      - number.set: { id: damper_1, value: 100 }
+      - number.set: { id: damper_2, value: 100 }
+      - number.set: { id: damper_3, value: 100 }
+      - number.set: { id: damper_4, value: 100 }
+      - logger.log: "Boot: all dampers commanded fully open (0V)"
+
+  # On a clean reboot/OTA, open the dampers before the ESP goes down.
+  # The GP8403 holds its last voltage while the ESP restarts, so this
+  # avoids sitting closed for the few seconds until on_boot runs.
+  on_shutdown:
+    then:
+      - output.set_level: { id: damper_output_1, level: 0% }
+      - output.set_level: { id: damper_output_2, level: 0% }
+      - output.set_level: { id: damper_output_3, level: 0% }
+      - output.set_level: { id: damper_output_4, level: 0% }
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  min_auth_mode: WPA2
+
+  ap:
+    ssid: "HVAC-Zone-Controller Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+# ============================================
+# I2C BUS
+# Kincony KC868-A8v3
+# ============================================
+
+i2c:
+  sda: GPIO8
+  scl: GPIO18
+  scan: true
+  frequency: 100kHz
+
+# ============================================
+# GP8403 0-10V DAC MODULES
+# Each module has two independent outputs.
+# ============================================
+
+gp8403:
+  - id: dac_1
+    address: 0x5E
+    voltage: 10V
+
+  - id: dac_2
+    address: 0x5F
+    voltage: 10V
+
+# ============================================
+# FOUR ANALOG DAMPER OUTPUTS
+# ============================================
+
+output:
+  - platform: gp8403
+    id: damper_output_1
+    gp8403_id: dac_1
+    channel: 0
+
+  - platform: gp8403
+    id: damper_output_2
+    gp8403_id: dac_1
+    channel: 1
+
+  - platform: gp8403
+    id: damper_output_3
+    gp8403_id: dac_2
+    channel: 0
+
+  - platform: gp8403
+    id: damper_output_4
+    gp8403_id: dac_2
+    channel: 1
+
+# ============================================
+# HOME ASSISTANT DAMPER POSITION SLIDERS
+#
+# Johnson Controls actuators set to RA
+#
+# HA 0%   = 10V = FULLY CLOSED
+# HA 25%  = 7.5V = 25% OPEN
+# HA 50%  = 5V = 50% OPEN
+# HA 75%  = 2.5V = 75% OPEN
+# HA 100% = 0V = FULLY OPEN
+#
+# These are commanded positions.
+# Actual position feedback is not connected.
+# ============================================
+
+number:
+  - platform: template
+    name: "Damper 1 - DAC1 OUT0"
+    id: damper_1
+    icon: mdi:valve
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: false
+    optimistic: true
+    set_action:
+      - output.set_level:
+          id: damper_output_1
+          level: !lambda "return 1.0f - (x / 100.0f);"
+
+  - platform: template
+    name: "Damper 2 - DAC1 OUT1"
+    id: damper_2
+    icon: mdi:valve
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: false
+    optimistic: true
+    set_action:
+      - output.set_level:
+          id: damper_output_2
+          level: !lambda "return 1.0f - (x / 100.0f);"
+
+  - platform: template
+    name: "Damper 3 - DAC2 OUT0"
+    id: damper_3
+    icon: mdi:valve
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: false
+    optimistic: true
+    set_action:
+      - output.set_level:
+          id: damper_output_3
+          level: !lambda "return 1.0f - (x / 100.0f);"
+
+  - platform: template
+    name: "Damper 4 - DAC2 OUT1"
+    id: damper_4
+    icon: mdi:valve
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 100
+    restore_value: false
+    optimistic: true
+    set_action:
+      - output.set_level:
+          id: damper_output_4
+          level: !lambda "return 1.0f - (x / 100.0f);"
+
+# ============================================
+# MAINTENANCE
+# ============================================
+
+button:
+  - platform: restart
+    name: "HVAC Zone Controller Reboot"

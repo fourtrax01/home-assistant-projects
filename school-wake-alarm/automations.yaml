@@ -1,0 +1,108 @@
+- id: '1791089782609'
+  alias: Kid 1 School Alarm
+  description: At Kid 1's wake-up time (input_datetime.kid1_wakeup_time) on District
+    school days (binary_sensor.district_school_day), run script.kid1_wake_up (calm tracks
+    from the Music Assistant library with a Pandora fallback, rising volume, plus a light fade-up).
+    If 'Kid 1 Skip Next Alarm' is on (sick day), skip this one alarm and turn the
+    skip back off, so the next school day rings normally. Since 2026-10-13 a skip
+    only counts if it was turned on in the last 24 h, or Fri-Sun for a Monday alarm;
+    an older one (e.g. pressed for a no-school day) is cleared and the alarm rings.
+  triggers:
+  - trigger: time
+    at: input_datetime.kid1_wakeup_time
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.district_school_day
+    state: 'on'
+  actions:
+  - choose:
+    - alias: Sick day - skip once, then re-arm (pressed in the last 24 h, or Fri-Sun
+        for Monday)
+      conditions:
+      - condition: state
+        entity_id: input_boolean.kid1_skip_next_alarm
+        state: 'on'
+      - alias: Pressed in the last 24 h, or over the weekend (Fri-Sun) for Monday
+        condition: template
+        value_template: "{% set age = now() - states.input_boolean.kid1_skip_next_alarm.last_changed
+          %} {{ age < timedelta(hours=24)\n   or (now().weekday() == 0 and age < timedelta(hours=72))
+          }}"
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.kid1_skip_next_alarm
+      - action: logbook.log
+        data:
+          name: Kid 1 School Alarm
+          message: Skipped today's alarm (sick day button). Re-armed for the next
+            school day.
+    - alias: Stale skip (pressed over 24 h ago, e.g. for a no-school day) - clear
+        it and ring normally
+      conditions:
+      - condition: state
+        entity_id: input_boolean.kid1_skip_next_alarm
+        state: 'on'
+      sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.kid1_skip_next_alarm
+      - action: logbook.log
+        data:
+          name: Kid 1 School Alarm
+          message: Ignored an old skip (pressed over 24 h ago); alarm rang normally.
+      - action: script.turn_on
+        target:
+          entity_id: script.kid1_wake_up
+    default:
+    - action: script.turn_on
+      target:
+        entity_id: script.kid1_wake_up
+  mode: single
+
+- id: '1791900000101'
+  alias: Kid 1 Skip Alarm - notify parents
+  description: 'When ''Kid 1 Skip Next Alarm'' is turned on, tell Parent 1 and Parent 2 which
+    alarm will be skipped and who turned it on, so a stray tap on the wall tablet
+    doesn''t silently cancel a school-day alarm (it did on 2026-10-13). 11-19 fix:
+    the alarm being skipped is computed from the shared District calendar (custom_templates/district.jinja),
+    NOT sensor.kid1_next_alarm, which already jumps past the skipped day once the
+    skip is on (Parent 2''s Thu-night skip for Fri was reported as ''Mon, too far away'').'
+  triggers:
+  - trigger: state
+    entity_id: input_boolean.kid1_skip_next_alarm
+    from: 'off'
+    to: 'on'
+  conditions: []
+  actions:
+  - variables:
+      who: "{% set names = {'person_user_id_1': 'Parent 1',\n                'person_user_id_2':
+        'Parent 2',\n                'person_user_id_3': 'Kid 1',\n                'person_user_id_4':
+        'the wall tablet'} %}\n{% set uid = trigger.to_state.context.user_id %} {{
+        names.get(uid, 'an automation' if uid is none else 'another device') }}"
+      next_alarm: '{% from ''district.jinja'' import district_next_alarm %}{{ district_next_alarm(states(''input_datetime.kid1_wakeup_time''))
+        }}'
+      when: '{% set t = next_alarm %} {{ as_local(as_datetime(t)).strftime(''%a %b
+        %-d, %-I:%M %p'') if t not in [''None'',''unknown'',''unavailable'','''']
+        else ''the next school day'' }}'
+      applies: '{% set t = next_alarm %} {% if t in [''None'',''unknown'',''unavailable'','''']
+        %}true{% else %} {% set at = as_datetime(t) %}{% set gap = at - now() %} {{
+        gap < timedelta(hours=24) or (as_local(at).weekday() == 0 and gap < timedelta(hours=72))
+        }} {% endif %}'
+  - action: notify.mobile_app_parent1_phone
+    data:
+      title: Kid 1's alarm will be skipped
+      message: '{% if applies | bool %}{{ when }} alarm will be skipped (turned on
+        by {{ who }}). Turn off ''Skip Kid 1''s Next Alarm'' if that''s a mistake.{%
+        else %}Skip turned on by {{ who }}, but the next alarm ({{ when }}) is too
+        far away - the skip will be cleared and that alarm WILL ring. Press it the
+        night before instead.{% endif %}'
+  - action: notify.mobile_app_parent2_phone
+    data:
+      title: Kid 1's alarm will be skipped
+      message: '{% if applies | bool %}{{ when }} alarm will be skipped (turned on
+        by {{ who }}). Turn off ''Skip Kid 1''s Next Alarm'' if that''s a mistake.{%
+        else %}Skip turned on by {{ who }}, but the next alarm ({{ when }}) is too
+        far away - the skip will be cleared and that alarm WILL ring. Press it the
+        night before instead.{% endif %}'
+  mode: single
+

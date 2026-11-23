@@ -1,0 +1,27 @@
+{# School calendar shared by binary_sensor.district_school_day, sensor.kid1_next_alarm and the
+   "Kid 1 Skip Alarm - notify parents" automation. Put this file in /config/custom_templates/.
+   EXAMPLE DATES: replace them with your own district's calendar every summer (first/last day and
+   every weekday with no school), then run homeassistant.reload_custom_templates. #}
+{% set district_first_day = '2026-08-10' %}
+{% set district_last_day = '2027-05-28' %}
+{% set district_no_school = ['2026-09-07','2026-11-11','2026-11-26','2026-11-27','2026-12-21','2026-12-22','2026-12-23','2026-12-24','2026-12-25','2026-12-28','2026-12-29','2026-12-30','2026-12-31','2027-01-01','2027-01-18','2027-02-15','2027-03-22','2027-03-23','2027-03-24','2027-03-25','2027-03-26'] %}
+
+{%- macro district_is_school_day(d) -%}
+{%- set d = d if d is string else d.isoformat() -%}
+{{ as_datetime(d ~ ' 12:00').weekday() < 5 and district_first_day <= d <= district_last_day and d not in district_no_school }}
+{%- endmacro -%}
+
+{#- Next school-day alarm time (ISO), skipping `skip` school days first. -#}
+{%- macro district_next_alarm(t, skip=0) -%}
+{%- set ns = namespace(found=none, left=skip | int) -%}
+{%- for i in range(0, 60) -%}
+{%- if ns.found is none -%}
+{%- set d = (now() + timedelta(days=i)).date().isoformat() -%}
+{%- set when = as_local(as_datetime(d ~ ' ' ~ t)) -%}
+{%- if district_is_school_day(d) == 'True' and when > now() -%}
+{%- if ns.left > 0 -%}{%- set ns.left = ns.left - 1 -%}{%- else -%}{%- set ns.found = when -%}{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{{ ns.found.isoformat() if ns.found else none }}
+{%- endmacro -%}

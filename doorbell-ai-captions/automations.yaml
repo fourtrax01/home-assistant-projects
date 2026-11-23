@@ -1,0 +1,282 @@
+- id: '1645167860169'
+  alias: Doorbell Rang Helper Picture Off/On
+  description: ''
+  triggers:
+  - entity_id:
+    - binary_sensor.doorbell
+    to: 'off'
+    for:
+      hours: 0
+      minutes: 10
+      seconds: 0
+    id: doorbell rang off
+    trigger: state
+  - entity_id:
+    - binary_sensor.doorbell
+    to: 'on'
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+    id: doorbell rang on
+    trigger: state
+  conditions: []
+  actions:
+  - choose:
+    - conditions:
+      - condition: trigger
+        id: doorbell rang on
+      sequence:
+      - data: {}
+        target:
+          entity_id: input_boolean.human_door_last_10_mins
+        action: input_boolean.turn_on
+    - conditions:
+      - condition: trigger
+        id: doorbell rang off
+      sequence:
+      - data: {}
+        target:
+          entity_id: input_boolean.human_door_last_10_mins
+        action: input_boolean.turn_off
+    default: []
+  mode: single
+
+- id: '1789532819036'
+  alias: Doorbell Notifications (Phone + TV Overlay)
+  description: 'Doorbell phone push + TV PiP overlay, sharing one AI description via
+    input_text.doorbell_tv_caption. ONE ALERT PER VISIT (2026-09-30): a person detection
+    alerts only if the porch has been clear of people for 1 minute (input_datetime.doorbell_last_person_seen,
+    refreshed on every doorbell_human on AND off, even for suppressed runs), so someone
+    lingering on the porch is a single visit. No front-door-open gate (removed at
+    user request). A doorbell press always alerts. phone_ok/tv_ok are decided once
+    at the start; runs that qualify for neither stop immediately; mode parallel so
+    a second detection cannot kill an in-flight clip download.'
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.doorbell_human
+    to: 'on'
+    id: human
+  - trigger: state
+    entity_id: binary_sensor.doorbell
+    to: 'on'
+    id: pressed
+  - trigger: state
+    entity_id: binary_sensor.doorbell_human
+    from: 'on'
+    to: 'off'
+    id: human_clear
+  conditions: []
+  actions:
+  - variables:
+      is_pressed: '{{ (trigger.id if trigger is defined else '''') == ''pressed''
+        }}'
+      title: '{{ ''Doorbell Pressed'' if is_pressed else ''Front Door'' }}'
+      clip_start: '{{ (as_timestamp(now()) - 1) | int }}'
+      clip_end: '{{ (as_timestamp(now()) + 14) | int }}'
+      new_visit: '{{ (as_timestamp(now()) - (state_attr(''input_datetime.doorbell_last_person_seen'',''timestamp'')
+        or 0)) > 60 }}'
+      phone_ok: '{{ is_pressed or ((trigger.id if trigger is defined else '''') ==
+        ''human'' and new_visit and (as_timestamp(now()) - (state_attr(''input_datetime.doorbell_phone_last_notified'',''timestamp'')
+        or 0)) > 60) }}'
+      tv_ok: '{{ is_pressed or ((trigger.id if trigger is defined else '''') == ''human''
+        and new_visit and (as_timestamp(now()) - (state_attr(''input_datetime.doorbell_tv_last_shown'',''timestamp'')
+        or 0)) > 60) }}'
+  - alias: Refresh last-person-seen on every detection start/end (even suppressed
+      ones) so a lingering visitor stays one visit
+    if:
+    - condition: trigger
+      id:
+      - human
+      - human_clear
+    then:
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.doorbell_last_person_seen
+      data:
+        timestamp: '{{ as_timestamp(now()) }}'
+  - alias: Skip duplicate triggers entirely (so they cannot clobber the shared caption
+      of an in-flight run)
+    condition: template
+    value_template: '{{ phone_ok or tv_ok }}'
+  - alias: File-name token from the OS's cryptographic generator (files in /config/www
+      are public to anyone with the URL, so names must be unguessable)
+    action: shell_command.doorbell_token
+    continue_on_error: true
+    response_variable: token_result
+  - variables:
+      token_raw: '{{ (token_result.stdout | default('''') | trim) if token_result is
+        defined and token_result is mapping else '''' }}'
+      token_ok: '{{ token_raw is match(''^[0-9a-f]{32}$'') }}'
+      token: '{% if token_ok %}{{ token_raw }}{% else %}{% for i in range(8) %}{{ ''%04x''
+        % (range(65536) | random) }}{% endfor %}{% endif %}'
+      snap_name: doorbell_{{ now().strftime('%Y%m%d_%H%M%S') }}_{{ token }}.jpg
+      snap_file: /config/www/snapshots/{{ snap_name }}
+      snap_url: /local/snapshots/{{ snap_name }}
+      clip_file: '{{ snap_name[:-4] }}.mp4'
+      clip_url: /local/clips/{{ clip_file }}
+      clip_ext_url: https://YOUR_EXTERNAL_URL/local/clips/{{ clip_file }}
+  - alias: If the secure token failed, the alert still goes out (with a non-cryptographic
+      random name), but log it so it gets fixed
+    if:
+    - condition: template
+      value_template: '{{ not token_ok }}'
+    then:
+    - action: system_log.write
+      data:
+        level: warning
+        logger: doorbell
+        message: shell_command.doorbell_token failed; this event's file name used Jinja random instead.
+  - alias: Claim the phone cooldown immediately so overlapping runs see it
+    if:
+    - condition: template
+      value_template: '{{ phone_ok }}'
+    then:
+    - action: input_datetime.set_datetime
+      target:
+        entity_id: input_datetime.doorbell_phone_last_notified
+      data:
+        timestamp: '{{ as_timestamp(now()) }}'
+  - alias: TV popup first, without waiting for the snapshot/phone alert (script runs
+      in the background; 10-25 fix for the gap between driveway and door popups)
+    if:
+    - condition: template
+      value_template: '{{ tv_ok }}'
+    then:
+    - action: script.turn_on
+      target:
+        entity_id: script.doorbell_tv_popup
+      data:
+        variables:
+          title: '{{ title }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.doorbell_tv_caption
+    data:
+      value: ''
+    note: Reset shared caption at the start of every run.
+  - delay: 00:00:01
+  - action: camera.snapshot
+    target:
+      entity_id: camera.doorbell
+    data:
+      filename: '{{ snap_file }}'
+  - delay: 00:00:01
+  - alias: Immediate notification with snapshot (only when this event qualifies for
+      a phone alert)
+    if:
+    - condition: template
+      value_template: '{{ phone_ok }}'
+    then:
+    - alias: Immediate notification with snapshot (no AI wait)
+      action: notify.mobile_app_parent1_phone
+      data:
+        title: '{{ title }}'
+        message: Activity detected.
+        data:
+          image: '{{ snap_url }}'
+          actions:
+          - action: URI
+            title: View Photo
+            uri: '{{ snap_url }}'
+          clickAction: entityId:camera.doorbell
+          tag: doorbell-{{ snap_name }}
+  - parallel:
+    - sequence:
+      - alias: Describe snapshot with AI (local Ollama, Gemini fallback)
+        action: shell_command.describe_snapshot
+        continue_on_error: true
+        data:
+          snap_file: '{{ snap_file }}'
+        response_variable: describe_result
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.doorbell_tv_caption
+        data:
+          value: '{{ (describe_result.stdout | trim) if describe_result is mapping
+            and describe_result.stdout is defined else '''' }}'
+      note: Computed exactly once per event; both other branches read it back from
+        input_text.doorbell_tv_caption.
+    - sequence:
+      - if:
+        - condition: template
+          value_template: '{{ phone_ok }}'
+        then:
+        - action: script.home_speaker_say
+          data:
+            replay: false
+            message: Someone is at the Door
+        - action: tts.cloud_say
+          data:
+            entity_id: media_player.garage_speaker
+            message: Someone is at the Door
+        - alias: Wait out any remainder of the clip window
+          delay: '{{ [2, (clip_end | int) - as_timestamp(now()) + 8] | max | int }}'
+        - alias: Download the clip from Frigate into /config/www/clips
+          action: shell_command.save_doorbell_clip
+          continue_on_error: true
+          data:
+            camera: front_door
+            clip_start: '{{ clip_start }}'
+            clip_end: '{{ clip_end }}'
+            clip_file: '{{ clip_file }}'
+          response_variable: clip_result
+        - alias: Replace notification with the playable clip
+          if:
+          - condition: template
+            value_template: '{{ clip_result is mapping and clip_result.returncode
+              == 0 }}'
+          then:
+          - action: notify.mobile_app_parent1_phone
+            continue_on_error: true
+            data:
+              title: '{{ title }}'
+              message: '{{ states(''input_text.doorbell_tv_caption'') if states(''input_text.doorbell_tv_caption'')
+                | trim | length > 0 else ''Activity detected.'' }}'
+              data:
+                video: '{{ clip_url }}'
+                actions:
+                - action: URI
+                  title: Play Clip
+                  uri: '{{ clip_ext_url }}'
+                - action: URI
+                  title: View Photo
+                  uri: '{{ snap_url }}'
+                clickAction: '{{ clip_ext_url }}'
+                tag: doorbell-{{ snap_name }}
+          else:
+          - condition: template
+            value_template: '{{ states(''input_text.doorbell_tv_caption'') | trim
+              | length > 0 }}'
+          - action: notify.mobile_app_parent1_phone
+            continue_on_error: true
+            data:
+              title: '{{ title }}'
+              message: '{{ states(''input_text.doorbell_tv_caption'') }}'
+              data:
+                image: '{{ snap_url }}'
+                actions:
+                - action: URI
+                  title: View Photo
+                  uri: '{{ snap_url }}'
+                clickAction: entityId:camera.doorbell
+                tag: doorbell-{{ snap_name }}
+      note: 'Phone tail branch: gated by phone_ok (one alert per visit; doorbell press
+        always alerts).'
+  mode: parallel
+  max: 5
+
+
+- id: '1645167860170'
+  alias: Doorbell Media Cleanup
+  description: Every night, delete doorbell snapshots older than 30 days and clips older
+    than 48 hours from /config/www (served at /local without login). The clip script also
+    prunes clips, but only when a new clip is saved; this runs even on quiet days.
+  triggers:
+  - trigger: time
+    at: 03:00:00
+  conditions: []
+  actions:
+  - action: shell_command.delete_old_doorbell_media
+    continue_on_error: true
+  mode: single

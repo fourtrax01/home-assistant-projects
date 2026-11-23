@@ -1,0 +1,1370 @@
+porch_cycle_top_bottom:
+  alias: Porch - Cycle Top and Bottom Colors
+  description: 'Cycles the top (segment 1) and bottom (segment 2) of all six H7076
+    porch wall lights through a color wheel, top and bottom half a wheel apart. Sides
+    are left alone. One step every 20 s, stops by itself after 30 min (Govee cloud
+    call budget: each step is 12 segment commands) or when this script is turned off.
+    Tops/bottoms go back to white at the next whole-light white command (e.g. the
+    nightly 4200K).'
+  mode: restart
+  icon: mdi:palette
+  sequence:
+  - variables:
+      colors:
+      - - 255
+        - 0
+        - 0
+      - - 255
+        - 120
+        - 0
+      - - 255
+        - 220
+        - 0
+      - - 0
+        - 255
+        - 0
+      - - 0
+        - 200
+        - 255
+      - - 0
+        - 0
+        - 255
+      - - 160
+        - 0
+        - 255
+      - - 255
+        - 0
+        - 160
+      lights:
+      - left_wall_light
+      - center_wall_light
+      - right_wall_light
+      - porch_wall_light
+      - walkway_wall_light
+      - walk_porch_light
+  - repeat:
+      count: 90
+      sequence:
+      - variables:
+          i: '{{ (repeat.index - 1) % (colors | count) }}'
+          j: '{{ (repeat.index - 1 + (colors | count) // 2) % (colors | count) }}'
+      - action: light.turn_on
+        target:
+          entity_id: '{{ lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+            | list }}'
+        data:
+          rgb_color: '{{ colors[i] }}'
+      - action: light.turn_on
+        target:
+          entity_id: '{{ lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_002'')
+            | list }}'
+        data:
+          rgb_color: '{{ colors[j] }}'
+      - delay: 00:00:20
+
+porch_fourth_of_july:
+  alias: Porch - Fourth of July
+  description: 'Red, white and blue on all six H7076 porch wall lights, using segments
+    through govee2mqtt: top (segment 1) red, left/right sides (3/4) blue, bottom (2)
+    white. Govee has no built-in July 4 effect. Used by Porch Light Full Smart Control
+    when the holiday lights calendar says IndependenceDay; the side-color automation
+    stands aside while a holiday is on the calendar.'
+  mode: single
+  icon: mdi:flag
+  sequence:
+  - variables:
+      lights:
+      - left_wall_light
+      - center_wall_light
+      - right_wall_light
+      - porch_wall_light
+      - walkway_wall_light
+      - walk_porch_light
+  - action: light.turn_on
+    target:
+      entity_id: '{{ lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+        | list }}'
+    data:
+      rgb_color:
+      - 255
+      - 0
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: '{{ lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_003'')
+        | list + lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_004'')
+        | list }}'
+    data:
+      rgb_color:
+      - 0
+      - 40
+      - 255
+  - action: light.turn_on
+    target:
+      entity_id: '{{ lights | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_002'')
+        | list }}'
+    data:
+      rgb_color:
+      - 255
+      - 255
+      - 255
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_fourth_of_july
+
+porch_christmas:
+  alias: Porch - Christmas
+  description: 'Christmas look for the six H7076 porch wall lights via govee2mqtt
+    segments. Physical order left to right from the street (mapped 2026-09-27): 1
+    Porch, 2 Walk/Porch, 3 Walkway, 4 Left, 5 Center, 6 Right. Positions 2/4/6 get
+    red tops and green sides, positions 1/3/5 green tops and red sides, so the house
+    alternates G R G R G R (swap=true flips). All bottoms are warm white.'
+  mode: single
+  icon: mdi:pine-tree
+  fields:
+    swap:
+      name: Swap
+      description: Swap which lights get red vs green tops
+      default: false
+      selector:
+        boolean: {}
+  sequence:
+  - variables:
+      order:
+      - porch_wall_light
+      - walk_porch_light
+      - walkway_wall_light
+      - left_wall_light
+      - center_wall_light
+      - right_wall_light
+      odd: '{{ order[1::2] }}'
+      even: '{{ order[0::2] }}'
+      a: '{{ even if swap | default(false) else odd }}'
+      b: '{{ odd if swap | default(false) else even }}'
+      red:
+      - 255
+      - 0
+      - 0
+      green:
+      - 0
+      - 255
+      - 30
+  - action: light.turn_on
+    target:
+      entity_id: '{{ a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+        | list + b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_003'')
+        | list + b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_004'')
+        | list }}'
+    data:
+      rgb_color: '{{ red }}'
+  - action: light.turn_on
+    target:
+      entity_id: '{{ b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+        | list + a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_003'')
+        | list + a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_004'')
+        | list }}'
+    data:
+      rgb_color: '{{ green }}'
+  - action: light.turn_on
+    target:
+      entity_id: '{{ (a + b) | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_002'')
+        | list }}'
+    data:
+      rgb_color:
+      - 255
+      - 190
+      - 75
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: '{{ ''script.porch_christmas:swap'' if swap | default(false) else ''script.porch_christmas''
+        }}'
+
+porch_christmas_cycle:
+  alias: Porch - Christmas Cycle
+  description: 'Christmas rotation for the porch wall lights (runs Porch - Holiday
+    Cycle). Since 2026-11-13 all looks are local LAN per-bead looks from /config/govee_tools/porch_looks.py
+    (no Govee cloud): christmas, candy climb, christmas spin, multicolor, christmas
+    twinkle, candy cane, christmas gold.'
+  mode: restart
+  icon: mdi:pine-tree
+  fields:
+    minutes:
+      name: Minutes per look
+      default: 1
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: min
+  sequence:
+  - action: script.porch_holiday_cycle
+    data:
+      minutes: '{{ minutes | default(1) }}'
+      looks:
+      - lan: christmas
+      - lan: candy_climb
+      - lan: christmas_spin
+      - lan: multicolor
+      - lan: christmas_twinkle
+      - lan: candy_cane
+      - lan: christmas_gold
+
+porch_easter_cycle:
+  alias: Porch - Easter Cycle
+  description: 'Easter rotation for the porch wall lights (runs Porch - Holiday Cycle):
+    Govee Tenderness, the multicolor look, multicolor twinkle and color chase twinkle.'
+  mode: restart
+  icon: mdi:egg-easter
+  fields:
+    minutes:
+      name: Minutes per look
+      default: 1
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: min
+  sequence:
+  - action: script.porch_holiday_cycle
+    data:
+      minutes: '{{ minutes | default(1) }}'
+      looks:
+      - effect: Tenderness
+      - script: porch_christmas_multicolor
+      - script: porch_multicolor_twinkle
+      - script: porch_color_chase_twinkle
+      - script: porch_multicolor_breathing
+
+porch_holiday_cycle:
+  alias: Porch - Holiday Cycle
+  description: 'Rotates the porch wall lights through a list of looks, changing every
+    `minutes` (default 5). Each look is either {effect: <Govee effect name>} (sent
+    to light.porch_effect_group) or {script: <script object id>, data: {...}}. Stops
+    at sunrise, when light.porch_effect_group turns off, when turned off, or after
+    14 h. Custom segment looks cost ~18-30 Govee cloud commands, effects 1, so 5 min
+    stays well inside the daily API limit. Called by the per-holiday cycle scripts.'
+  mode: restart
+  icon: mdi:party-popper
+  fields:
+    looks:
+      name: Looks
+      required: true
+      selector:
+        object: {}
+    minutes:
+      name: Minutes per look
+      default: 5
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: min
+  sequence:
+  - variables:
+      step_s: '{{ ((minutes | default(5) | float(5)) * 60) | int }}'
+  - repeat:
+      while:
+      - condition: state
+        entity_id: sun.sun
+        state: below_horizon
+      - alias: Porch not turned off (LAN group; Matter dropped 11-22)
+        condition: not
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'off'
+      - alias: Not while porch activity has everything on base white
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      - condition: template
+        value_template: '{{ repeat.index * step_s < 14 * 3600 }}'
+      sequence:
+      - variables:
+          look: '{{ looks[(repeat.index - 1) % (looks | count)] }}'
+      - if:
+        - condition: or
+          conditions:
+          - condition: state
+            entity_id: script.porch_breathe
+            state: 'on'
+          - condition: state
+            entity_id: script.porch_twinkle
+            state: 'on'
+          - condition: state
+            entity_id: script.porch_color_chase
+            state: 'on'
+          - condition: state
+            entity_id: script.porch_halloween_candle
+            state: 'on'
+        then:
+        - alias: Stop the breathing/twinkle/chase/candle from the previous look and
+            restore brightness
+          action: script.turn_off
+          target:
+            entity_id:
+            - script.porch_breathe
+            - script.porch_twinkle
+            - script.porch_color_chase
+            - script.porch_halloween_candle
+        - action: light.turn_on
+          target:
+            entity_id: light.porch_effect_group
+          data:
+            brightness: '{{ states(''input_number.porch_light_target_brightness'')
+              | int(191) }}'
+      - if:
+        - condition: template
+          value_template: '{{ look.lan is defined }}'
+        then:
+        - alias: Local LAN look (porch_looks.py) at the current target brightness
+          action: shell_command.porch_look
+          data:
+            look: '{{ look.lan }}'
+            bri: '{{ ((states(''input_number.porch_light_target_brightness'') | float(191))
+              / 255 * 100) | round(0) | int }}'
+        else:
+        - if:
+          - condition: template
+            value_template: '{{ look.script is defined }}'
+          then:
+          - action: script.turn_on
+            target:
+              entity_id: script.{{ look.script }}
+            data:
+              variables: '{{ look.data | default({}) }}'
+          else:
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              effect: '{{ look.effect }}'
+      - delay:
+          seconds: '{{ step_s }}'
+
+porch_christmas_multicolor:
+  alias: Porch - Multicolor
+  description: 'Old-fashioned multicolor Christmas bulbs: each porch wall light gets
+    its own color on top and bottom (over Matter, local and fast), and sides in the
+    top color of the light three positions away (set after the Matter colors, which
+    recolor the sides too). Left to right from the street: Porch cyan, Walk/Porch
+    purple, Walkway green (blue looked too close to the cyan Porch), Left pink (red
+    + green sides just mirrored the Walkway), Center orange, Right blue (green matched
+    its green sides, yellow was too close to the orange Center).'
+  mode: single
+  icon: mdi:string-lights
+  sequence:
+  - action: script.porch_christmas
+  - alias: Let the Govee segment commands finish before the Matter colors
+    delay: 00:00:20
+  - alias: Nudge first - Matter lights ignore a color they already report, even after
+      Govee segments changed what is actually showing
+    action: light.turn_on
+    target:
+      entity_id: light.porch_effect_group
+    data:
+      color_temp_kelvin: 4000
+  - delay: 00:00:02
+  - action: light.turn_on
+    target:
+      entity_id: light.porch_wall_light
+    data:
+      rgb_color:
+      - 0
+      - 220
+      - 255
+  - action: light.turn_on
+    target:
+      entity_id: light.walk_porch_light
+    data:
+      rgb_color:
+      - 200
+      - 0
+      - 255
+  - action: light.turn_on
+    target:
+      entity_id: light.walkway_wall_light
+    data:
+      rgb_color:
+      - 0
+      - 255
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.left_wall_light
+    data:
+      rgb_color:
+      - 255
+      - 0
+      - 120
+  - action: light.turn_on
+    target:
+      entity_id: light.center_wall_light
+    data:
+      rgb_color:
+      - 255
+      - 140
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.right_wall_light
+    data:
+      rgb_color:
+      - 0
+      - 0
+      - 255
+  - alias: Matter RGB recolors the sides too, so set the sides after it. Each light's
+      sides use the top color of the light three positions away, so every light has
+      its own pair.
+    delay: 00:00:05
+  - alias: cyan top, pink sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.porch_wall_light_segment_003
+      - light.porch_wall_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 0
+      - 120
+  - alias: purple top, orange sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.walk_porch_light_segment_003
+      - light.walk_porch_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 140
+      - 0
+  - alias: green top, blue sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.walkway_wall_light_segment_003
+      - light.walkway_wall_light_segment_004
+    data:
+      rgb_color:
+      - 0
+      - 0
+      - 255
+  - alias: pink top, cyan sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.left_wall_light_segment_003
+      - light.left_wall_light_segment_004
+    data:
+      rgb_color:
+      - 0
+      - 220
+      - 255
+  - alias: orange top, purple sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.center_wall_light_segment_003
+      - light.center_wall_light_segment_004
+    data:
+      rgb_color:
+      - 200
+      - 0
+      - 255
+  - alias: blue top, green sides
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.right_wall_light_segment_003
+      - light.right_wall_light_segment_004
+    data:
+      rgb_color:
+      - 0
+      - 255
+      - 30
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_christmas_multicolor
+  - alias: Stay 'on' while the side-color automation's queued runs check (they stand
+      aside while this script runs)
+    delay: 00:00:30
+
+porch_breathe:
+  alias: Porch - Breathe
+  description: 'Slow breathing fade for the six porch wall lights over Matter (local,
+    no Govee cloud calls), keeping whatever colors are showing. These lights ignore
+    Matter transitions, so it steps the brightness. The top of the breath follows
+    the porch automation''s current target (input_number.porch_light_target_brightness:
+    75% before midnight, 30% after) and the bottom is low_ratio of it (default 0.6
+    - 0.25 was too dim). Runs until turned off, sunrise, the porch turning off, or
+    14 h. Porch activity (automation Porch Activity - Base White) and Porch - Holiday
+    Cycle turn it off.'
+  mode: restart
+  icon: mdi:weather-windy
+  fields:
+    low_ratio:
+      name: Low point (fraction of normal brightness)
+      default: 0.6
+      selector:
+        number:
+          min: 0.05
+          max: 0.9
+          step: 0.05
+    seconds:
+      name: Seconds each way
+      default: 4
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: s
+    steps:
+      name: Steps each way
+      default: 8
+      selector:
+        number:
+          min: 2
+          max: 20
+  sequence:
+  - variables:
+      sec: '{{ seconds | default(4) | float(4) }}'
+      n: '{{ steps | default(8) | int(8) }}'
+      ratio: '{{ low_ratio | default(0.6) | float(0.6) }}'
+  - repeat:
+      while:
+      - condition: state
+        entity_id: sun.sun
+        state: below_horizon
+      - alias: Porch not turned off (LAN group; Matter dropped 11-22)
+        condition: not
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'off'
+      - alias: Not while porch activity has everything on base white
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      - condition: template
+        value_template: '{{ repeat.index * 2 * sec < 14 * 3600 }}'
+      sequence:
+      - variables:
+          hi: '{{ states(''input_number.porch_light_target_brightness'') | int(191)
+            }}'
+          lo: '{{ [(hi * ratio) | int, 3] | max }}'
+          levels: '{% set r = namespace(v=[]) %}{% for i in range(1, n + 1) %}{% set
+            r.v = r.v + [(hi - (hi - lo) * i / n) | int] %}{% endfor %}{% for i in
+            range(1, n + 1) %}{% set r.v = r.v + [(lo + (hi - lo) * i / n) | int]
+            %}{% endfor %}{{ r.v }}'
+      - repeat:
+          for_each: '{{ levels }}'
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.porch_effect_group
+            data:
+              brightness: '{{ repeat.item }}'
+          - delay:
+              milliseconds: '{{ (sec * 1000 / n) | int }}'
+
+porch_multicolor_breathing:
+  alias: Porch - Multicolor Breathing
+  description: The multicolor look with a slow breathing fade (Porch - Multicolor,
+    then Porch - Breathe).
+  mode: single
+  icon: mdi:string-lights
+  sequence:
+  - action: script.porch_christmas_multicolor
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_breathe
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_multicolor_breathing
+
+porch_twinkle:
+  alias: Porch - Twinkle
+  description: Each porch wall light breathes on its own random rhythm (random 3.8-8.2
+    s per breath and random starting point, re-picked each run), so the row twinkles
+    instead of pulsing together. Brightness only, over Matter (local), keeping whatever
+    colors are showing. Top of each breath = input_number.porch_light_target_brightness
+    (75% before midnight, 30% after), bottom = low_ratio of it (default 0.2 - 0.5
+    was too subtle to see). Updates every `tick` seconds. Runs until turned off, sunrise,
+    the porch turning off, or 14 h; porch activity and Porch - Holiday Cycle turn
+    it off.
+  mode: restart
+  icon: mdi:shimmer
+  fields:
+    low_ratio:
+      name: Low point (fraction of normal brightness)
+      default: 0.2
+      selector:
+        number:
+          min: 0.05
+          max: 0.9
+          step: 0.05
+    tick:
+      name: Seconds between updates
+      default: 0.5
+      selector:
+        number:
+          min: 0.3
+          max: 3
+          step: 0.1
+          unit_of_measurement: s
+  sequence:
+  - variables:
+      ratio: '{{ low_ratio | default(0.2) | float(0.2) }}'
+      dt: '{{ tick | default(0.5) | float(0.5) }}'
+      rhythm: '{% set r = namespace(v=[]) %}{% for e in [''light.porch_wall_light'',
+        ''light.walk_porch_light'', ''light.walkway_wall_light'', ''light.left_wall_light'',
+        ''light.center_wall_light'', ''light.right_wall_light''] %}{% set r.v = r.v
+        + [[e, (range(38, 83) | random) / 10, (range(0, 100) | random) / 100]] %}{%
+        endfor %}{{ r.v }}'
+  - repeat:
+      while:
+      - condition: state
+        entity_id: sun.sun
+        state: below_horizon
+      - alias: Porch not turned off (LAN group; Matter dropped 11-22)
+        condition: not
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'off'
+      - alias: Not while porch activity has everything on base white
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      - condition: template
+        value_template: '{{ repeat.index * dt < 14 * 3600 }}'
+      sequence:
+      - variables:
+          t: '{{ repeat.index * dt }}'
+          hi: '{{ states(''input_number.porch_light_target_brightness'') | int(191)
+            }}'
+          lo: '{{ [(hi * ratio) | int, 3] | max }}'
+          order: '{{ rhythm | shuffle }}'
+      - alias: One at a time in a new random order each tick (parallel sends crashed
+          the Matter client on 2026-09-27; the shuffle keeps it from reading left-to-right)
+        sequence:
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[0][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[0][1]
+              + order[0][2])))) | int }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[1][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[1][1]
+              + order[1][2])))) | int }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[2][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[2][1]
+              + order[2][2])))) | int }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[3][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[3][1]
+              + order[3][2])))) | int }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[4][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[4][1]
+              + order[4][2])))) | int }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ order[5][0] }}'
+          data:
+            brightness: '{{ (lo + (hi - lo) * (0.5 + 0.5 * cos(2 * pi * (t / order[5][1]
+              + order[5][2])))) | int }}'
+      - delay:
+          milliseconds: '{{ (dt * 1000) | int }}'
+
+porch_color_chase:
+  alias: Porch - Color Chase
+  description: 'Moves the multicolor palette along the six porch wall lights: every
+    `hold` seconds each color fades over `fade` seconds to the next light (left to
+    right from the street: Porch, Walk/Porch, Walkway, Left, Center, Right, then around).
+    Color only, over Matter (local) - these lights ignore Matter transitions, so the
+    fade is stepped. Matter RGB also recolors the side segments, so each light is
+    one solid color while this runs. Works alongside Porch - Twinkle (brightness only).
+    Stops at sunrise, when the porch turns off, during porch activity, or after 14
+    h. Palette: Christmas multicolor, or Halloween (orange, purple, green, orange,
+    red, purple) when palette_name=halloween or, on auto, while the holiday calendar
+    says Halloween (so an activity resume picks the right one).'
+  mode: restart
+  icon: mdi:palette-swatch-variant
+  fields:
+    hold:
+      name: Seconds between moves
+      default: 20
+      selector:
+        number:
+          min: 3
+          max: 600
+          unit_of_measurement: s
+    fade:
+      name: Fade seconds
+      default: 2
+      selector:
+        number:
+          min: 0.5
+          max: 10
+          step: 0.5
+          unit_of_measurement: s
+    palette_name:
+      name: Palette
+      description: auto = Halloween palette while the holiday calendar says Halloween,
+        otherwise the Christmas multicolor palette
+      default: auto
+      selector:
+        select:
+          options:
+          - auto
+          - christmas
+          - halloween
+  sequence:
+  - variables:
+      lights:
+      - light.porch_wall_light
+      - light.walk_porch_light
+      - light.walkway_wall_light
+      - light.left_wall_light
+      - light.center_wall_light
+      - light.right_wall_light
+      palettes:
+        christmas:
+        - - 0
+          - 220
+          - 255
+        - - 200
+          - 0
+          - 255
+        - - 0
+          - 255
+          - 0
+        - - 255
+          - 0
+          - 120
+        - - 255
+          - 140
+          - 0
+        - - 0
+          - 0
+          - 255
+        halloween:
+        - - 255
+          - 100
+          - 0
+        - - 180
+          - 0
+          - 255
+        - - 0
+          - 255
+          - 0
+        - - 255
+          - 100
+          - 0
+        - - 255
+          - 0
+          - 0
+        - - 180
+          - 0
+          - 255
+      palette: '{% set p = palette_name | default(''auto'') %}{% if p not in [''christmas'',
+        ''halloween''] %}{% set p = ''halloween'' if is_state(''calendar.holiday_lights_calendar'',
+        ''on'') and (state_attr(''calendar.holiday_lights_calendar'', ''message'')
+        | default('''', true) | trim) == ''Halloween'' else ''christmas'' %}{% endif
+        %}{{ palettes[p] }}'
+      steps: 8
+      hold_s: '{{ hold | default(20) | float(20) }}'
+      fade_s: '{{ fade | default(2) | float(2) }}'
+  - repeat:
+      while:
+      - condition: state
+        entity_id: sun.sun
+        state: below_horizon
+      - alias: Porch not turned off (LAN group; Matter dropped 11-22)
+        condition: not
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'off'
+      - alias: Not while porch activity has everything on base white
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      - condition: template
+        value_template: '{{ repeat.index * hold_s < 14 * 3600 }}'
+      sequence:
+      - variables:
+          shift: '{{ repeat.index - 1 }}'
+      - repeat:
+          count: '{{ steps }}'
+          sequence:
+          - variables:
+              f: '{{ repeat.index / steps }}'
+              order: '{{ lights | shuffle }}'
+              mix: '{% set ns = namespace(d={}) %}{% for l in lights %}{% set i =
+                loop.index0 %}{% set a = palette[(i - shift) % 6] %}{% set b = palette[(i
+                - shift - 1) % 6] %}{% set ns.d = dict(ns.d, **{l: [((a[0] + (b[0]
+                - a[0]) * f) | int), ((a[1] + (b[1] - a[1]) * f) | int), ((a[2] +
+                (b[2] - a[2]) * f) | int)]}) %}{% endfor %}{{ ns.d }}'
+          - sequence:
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[0] }}'
+              data:
+                rgb_color: '{{ mix[order[0]] }}'
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[1] }}'
+              data:
+                rgb_color: '{{ mix[order[1]] }}'
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[2] }}'
+              data:
+                rgb_color: '{{ mix[order[2]] }}'
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[3] }}'
+              data:
+                rgb_color: '{{ mix[order[3]] }}'
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[4] }}'
+              data:
+                rgb_color: '{{ mix[order[4]] }}'
+            - action: light.turn_on
+              target:
+                entity_id: '{{ order[5] }}'
+              data:
+                rgb_color: '{{ mix[order[5]] }}'
+          - delay:
+              milliseconds: '{{ (fade_s * 1000 / steps) | int }}'
+      - delay:
+          seconds: '{{ [hold_s - fade_s, 0] | max }}'
+
+porch_multicolor_twinkle:
+  alias: Porch - Multicolor Twinkle
+  description: 'Look: the multicolor look (each light its own top/bottom color with
+    its own side color) with the random twinkle.'
+  mode: single
+  icon: mdi:shimmer
+  sequence:
+  - action: script.porch_christmas_multicolor
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_twinkle
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_multicolor_twinkle
+
+porch_color_chase_twinkle:
+  alias: Porch - Color Chase Twinkle
+  description: 'Look: the multicolor palette moving one light to the right every 20
+    s with a 2 s fade (each light one solid color), plus the random twinkle.'
+  mode: single
+  icon: mdi:palette-swatch-variant
+  sequence:
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_color_chase
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_twinkle
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_color_chase_twinkle
+
+porch_birthday_cycle:
+  alias: Porch - Birthday Cycle
+  description: 'Birthday rotation for the porch wall lights (runs Porch - Holiday
+    Cycle) on Kid 1 , Kid 2  and Parent 2  birthdays from the holiday
+    lights calendar: Govee Birthday, color chase twinkle, multicolor twinkle.'
+  mode: restart
+  icon: mdi:cake-variant
+  fields:
+    minutes:
+      name: Minutes per look
+      default: 1
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: min
+  sequence:
+  - action: script.porch_holiday_cycle
+    data:
+      minutes: '{{ minutes | default(1) }}'
+      looks:
+      - effect: Birthday
+      - script: porch_color_chase_twinkle
+      - script: porch_multicolor_twinkle
+
+porch_halloween:
+  alias: Porch - Halloween Pumpkin & Potion
+  description: 'Halloween look for the six H7076 porch wall lights via govee2mqtt
+    segments, same layout as Porch - Christmas. Left to right from the street (1 Porch,
+    2 Walk/Porch, 3 Walkway, 4 Left, 5 Center, 6 Right): positions 2/4/6 get orange
+    tops and purple sides, 1/3/5 purple tops and orange sides (swap=true flips). Bottoms
+    are green.'
+  mode: single
+  icon: mdi:halloween
+  fields:
+    swap:
+      name: Swap
+      description: Swap which lights get orange vs purple tops
+      default: false
+      selector:
+        boolean: {}
+  sequence:
+  - variables:
+      order:
+      - porch_wall_light
+      - walk_porch_light
+      - walkway_wall_light
+      - left_wall_light
+      - center_wall_light
+      - right_wall_light
+      odd: '{{ order[1::2] }}'
+      even: '{{ order[0::2] }}'
+      a: '{{ even if swap | default(false) else odd }}'
+      b: '{{ odd if swap | default(false) else even }}'
+      orange:
+      - 255
+      - 90
+      - 0
+      purple:
+      - 160
+      - 0
+      - 255
+      green:
+      - 0
+      - 255
+      - 30
+  - action: light.turn_on
+    target:
+      entity_id: '{{ a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+        | list + b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_003'')
+        | list + b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_004'')
+        | list }}'
+    data:
+      rgb_color: '{{ orange }}'
+  - action: light.turn_on
+    target:
+      entity_id: '{{ b | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_001'')
+        | list + a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_003'')
+        | list + a | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_004'')
+        | list }}'
+    data:
+      rgb_color: '{{ purple }}'
+  - action: light.turn_on
+    target:
+      entity_id: '{{ (a + b) | map(''regex_replace'', ''^(.*)$'', ''light.\\1_segment_002'')
+        | list }}'
+    data:
+      rgb_color: '{{ green }}'
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: '{{ ''script.porch_halloween:swap'' if swap | default(false) else ''script.porch_halloween''
+        }}'
+
+porch_halloween_multicolor:
+  alias: Porch - Halloween Multicolor
+  description: 'Each porch wall light gets its own Halloween top/bottom color over
+    Matter, then its own side color via govee segments (Matter RGB recolors the sides,
+    so sides go last). Colors: orange, purple, green, red (user pick 2026-10-03).
+    Left to right from the street, top/sides: Porch orange/green, Walk/Porch purple/orange,
+    Walkway green/purple, Left red/orange, Center orange/purple, Right purple/red.
+    Every pair is different and no neighbors mirror each other.'
+  mode: single
+  icon: mdi:halloween
+  sequence:
+  - alias: Nudge first - Matter lights ignore a color they already report
+    action: light.turn_on
+    target:
+      entity_id: light.porch_effect_group
+    data:
+      color_temp_kelvin: 4000
+  - delay: 00:00:02
+  - action: light.turn_on
+    target:
+      entity_id: light.porch_wall_light
+    data:
+      rgb_color:
+      - 255
+      - 100
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.walk_porch_light
+    data:
+      rgb_color:
+      - 180
+      - 0
+      - 255
+  - action: light.turn_on
+    target:
+      entity_id: light.walkway_wall_light
+    data:
+      rgb_color:
+      - 0
+      - 255
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.left_wall_light
+    data:
+      rgb_color:
+      - 255
+      - 0
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.center_wall_light
+    data:
+      rgb_color:
+      - 255
+      - 100
+      - 0
+  - action: light.turn_on
+    target:
+      entity_id: light.right_wall_light
+    data:
+      rgb_color:
+      - 180
+      - 0
+      - 255
+  - alias: Sides after the Matter colors
+    delay: 00:00:05
+  - alias: 'Porch: orange top, green sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.porch_wall_light_segment_003
+      - light.porch_wall_light_segment_004
+    data:
+      rgb_color:
+      - 0
+      - 255
+      - 30
+  - alias: 'Walk/Porch: purple top, orange sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.walk_porch_light_segment_003
+      - light.walk_porch_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 100
+      - 0
+  - alias: 'Walkway: green top, purple sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.walkway_wall_light_segment_003
+      - light.walkway_wall_light_segment_004
+    data:
+      rgb_color:
+      - 180
+      - 0
+      - 255
+  - alias: 'Left: red top, orange sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.left_wall_light_segment_003
+      - light.left_wall_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 100
+      - 0
+  - alias: 'Center: orange top, purple sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.center_wall_light_segment_003
+      - light.center_wall_light_segment_004
+    data:
+      rgb_color:
+      - 180
+      - 0
+      - 255
+  - alias: 'Right: purple top, red sides'
+    action: light.turn_on
+    target:
+      entity_id:
+      - light.right_wall_light_segment_003
+      - light.right_wall_light_segment_004
+    data:
+      rgb_color:
+      - 255
+      - 0
+      - 0
+  - alias: Remember the look (resumed after porch activity clears)
+    action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_halloween_multicolor
+  - alias: Stay 'on' while the side-color automation's queued runs check
+    delay: 00:00:30
+
+porch_halloween_multicolor_twinkle:
+  alias: Porch - Halloween Multicolor Twinkle
+  description: 'Look: Porch - Halloween Multicolor with the random twinkle.'
+  mode: single
+  icon: mdi:shimmer
+  sequence:
+  - action: script.porch_halloween_multicolor
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_twinkle
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_halloween_multicolor_twinkle
+
+porch_halloween_chase_twinkle:
+  alias: Porch - Halloween Chase Twinkle
+  description: 'Look: the Halloween palette (orange, purple, green, orange, red, purple)
+    moving one light to the right every 20 s with a 2 s fade (each light one solid
+    color), plus the random twinkle.'
+  mode: single
+  icon: mdi:palette-swatch-variant
+  sequence:
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_color_chase
+    data:
+      variables:
+        palette_name: halloween
+  - action: script.turn_on
+    target:
+      entity_id: script.porch_twinkle
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_halloween_chase_twinkle
+
+porch_halloween_candle:
+  alias: Porch - Halloween Candle & Lightning
+  description: 'All six porch wall lights glow deep orange and flicker like candles
+    (each light jumps to a random 35-100% of the target brightness, one light at a
+    time over Matter, every ~0.3-0.6 s). Every 20-40 s (by the clock), a lightning
+    strike: two quick cool-white flashes on 1-3 neighbouring lights at a random spot
+    (about 1 in 4 on the whole porch), then back to candlelight. Eaves are left alone
+    (a flash would restart their WLED playlist). Stops at sunrise, when the porch
+    turns off, during porch activity, when Porch - Holiday Cycle moves on, or after
+    14 h.'
+  mode: restart
+  icon: mdi:candle
+  sequence:
+  - variables:
+      lights:
+      - light.porch_wall_light
+      - light.walk_porch_light
+      - light.walkway_wall_light
+      - light.left_wall_light
+      - light.center_wall_light
+      - light.right_wall_light
+      candle:
+      - 255
+      - 70
+      - 0
+      next_at: '{{ as_timestamp(now()) + range(10, 20) | random }}'
+  - alias: Nudge so Matter applies the orange
+    action: light.turn_on
+    target:
+      entity_id: light.porch_effect_group
+    data:
+      color_temp_kelvin: 4000
+  - delay: 00:00:02
+  - action: light.turn_on
+    target:
+      entity_id: light.porch_effect_group
+    data:
+      rgb_color: '{{ candle }}'
+      brightness: '{{ states(''input_number.porch_light_target_brightness'') | int(191)
+        }}'
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.porch_current_look
+    data:
+      value: script.porch_halloween_candle
+  - repeat:
+      while:
+      - condition: state
+        entity_id: sun.sun
+        state: below_horizon
+      - alias: Porch not turned off
+        condition: not
+        conditions:
+        - condition: state
+          entity_id: light.porch_effect_group
+          state: 'off'
+      - alias: Not while porch activity has everything on base white
+        condition: state
+        entity_id: input_boolean.porch_activity_override
+        state: 'off'
+      - condition: template
+        value_template: '{{ repeat.index < 100000 }}'
+      sequence:
+      - variables:
+          hi: '{{ states(''input_number.porch_light_target_brightness'') | int(191)
+            }}'
+          order: '{{ lights | shuffle }}'
+      - if:
+        - alias: Lightning every 20-40 s by the clock (a flicker tick is ~0.9 s over
+            Matter, so counting ticks made strikes only about once a minute)
+          condition: template
+          value_template: '{{ as_timestamp(now()) >= next_at }}'
+        then:
+        - alias: Pick where it strikes - usually 1-3 neighbouring lights at a random
+            spot (lights are in left-to-right order), about 1 in 4 the whole porch
+          variables:
+            width: '{{ 6 if (range(4) | random) == 0 else range(1, 4) | random }}'
+            start: '{{ range(0, 7 - width) | random }}'
+            strike: '{{ lights[start:start + width] }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ strike }}'
+          data:
+            color_temp_kelvin: 6500
+            brightness: 255
+            transition: 0
+        - delay:
+            milliseconds: 300
+        - action: light.turn_on
+          target:
+            entity_id: '{{ strike }}'
+          data:
+            brightness: 1
+            transition: 0
+        - delay:
+            milliseconds: '{{ range(150, 400) | random }}'
+        - action: light.turn_on
+          target:
+            entity_id: '{{ strike }}'
+          data:
+            color_temp_kelvin: 6500
+            brightness: 255
+            transition: 0
+        - delay:
+            milliseconds: 450
+        - action: light.turn_on
+          target:
+            entity_id: '{{ strike }}'
+          data:
+            rgb_color: '{{ candle }}'
+            brightness: '{{ (hi * 0.5) | int }}'
+        - variables:
+            next_at: '{{ as_timestamp(now()) + range(20, 40) | random }}'
+        else:
+        - alias: Candle flicker, one light at a time
+          sequence:
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[0] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[1] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[2] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[3] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[4] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+          - action: light.turn_on
+            target:
+              entity_id: '{{ order[5] }}'
+            data:
+              brightness: '{{ (hi * (range(35, 101) | random) / 100) | int }}'
+      - delay:
+          milliseconds: '{{ range(300, 600) | random }}'
+
+porch_halloween_cycle:
+  alias: Porch - Halloween Cycle
+  description: 'Halloween rotation for the porch wall lights (runs Porch - Holiday
+    Cycle), Oct 25-31 from the holiday lights calendar: Govee Halloween, Pumpkin &
+    Potion, Halloween multicolor, Govee Halloween B, Pumpkin & Potion swapped, multicolor
+    1 min per look (candle & lightning, multicolor twinkle and chase twinkle removed
+    2026-10-22: their constant Matter updates were suspected in the Govee drops) by
+    default (user choice 2026-10-11; was 5). Colors: orange, purple, green, red.'
+  mode: restart
+  icon: mdi:halloween
+  fields:
+    minutes:
+      name: Minutes per look
+      default: 1
+      selector:
+        number:
+          min: 0.5
+          max: 60
+          step: 0.5
+          unit_of_measurement: min
+  sequence:
+  - action: script.porch_holiday_cycle
+    data:
+      minutes: '{{ minutes | default(1) }}'
+      looks:
+      - effect: Halloween
+      - script: porch_halloween
+        data:
+          swap: false
+      - script: porch_halloween_multicolor
+      - effect: Halloween B
+      - script: porch_halloween
+        data:
+          swap: true
+
