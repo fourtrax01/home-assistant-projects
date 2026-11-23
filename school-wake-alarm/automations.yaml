@@ -1,12 +1,12 @@
 - id: '1791089782609'
   alias: Kid 1 School Alarm
-  description: At Kid 1's wake-up time (input_datetime.kid1_wakeup_time) on District
-    school days (binary_sensor.district_school_day), run script.kid1_wake_up (calm tracks
-    from the Music Assistant library with a Pandora fallback, rising volume, plus a light fade-up).
-    If 'Kid 1 Skip Next Alarm' is on (sick day), skip this one alarm and turn the
-    skip back off, so the next school day rings normally. Since 2026-10-13 a skip
-    only counts if it was turned on in the last 24 h, or Fri-Sun for a Monday alarm;
-    an older one (e.g. pressed for a no-school day) is cleared and the alarm rings.
+  description: >-
+    At the wake-up time (input_datetime.kid1_wakeup_time), on school days only
+    (binary_sensor.district_school_day, from custom_templates/district.jinja), runs
+    script.kid1_wake_up: calm music with slowly rising volume and a slow light fade-up. If the
+    'skip next alarm' toggle is on, that one alarm is skipped and the toggle turns itself off. A
+    skip only counts if it was set in the last 24 hours (or over the weekend for a Monday
+    alarm); an older, forgotten skip is cleared and the alarm rings.
   triggers:
   - trigger: time
     at: input_datetime.kid1_wakeup_time
@@ -61,12 +61,11 @@
 
 - id: '1791900000101'
   alias: Kid 1 Skip Alarm - notify parents
-  description: 'When ''Kid 1 Skip Next Alarm'' is turned on, tell Parent 1 and Parent 2 which
-    alarm will be skipped and who turned it on, so a stray tap on the wall tablet
-    doesn''t silently cancel a school-day alarm (it did on 2026-10-13). 11-19 fix:
-    the alarm being skipped is computed from the shared District calendar (custom_templates/district.jinja),
-    NOT sensor.kid1_next_alarm, which already jumps past the skipped day once the
-    skip is on (Parent 2''s Thu-night skip for Fri was reported as ''Mon, too far away'').'
+  description: >-
+    When the 'skip next alarm' toggle is turned on, notifies both parents which alarm will be
+    skipped and who turned the toggle on, so a stray tap on a wall tablet can't silently cancel
+    a school-day alarm. If the next alarm is too far away for the skip to apply, the message
+    says the alarm WILL ring.
   triggers:
   - trigger: state
     entity_id: input_boolean.kid1_skip_next_alarm

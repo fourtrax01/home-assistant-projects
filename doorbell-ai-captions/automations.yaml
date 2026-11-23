@@ -1,6 +1,9 @@
 - id: '1645167860169'
   alias: Doorbell Rang Helper Picture Off/On
-  description: ''
+  description: >-
+    Turns input_boolean.human_door_last_10_mins on when the doorbell button is pressed and off
+    again 10 minutes after it was last pressed. A dashboard conditional card uses it to show the
+    doorbell camera only right after a ring.
   triggers:
   - entity_id:
     - binary_sensor.doorbell
@@ -44,14 +47,15 @@
 
 - id: '1789532819036'
   alias: Doorbell Notifications (Phone + TV Overlay)
-  description: 'Doorbell phone push + TV PiP overlay, sharing one AI description via
-    input_text.doorbell_tv_caption. ONE ALERT PER VISIT (2026-09-30): a person detection
-    alerts only if the porch has been clear of people for 1 minute (input_datetime.doorbell_last_person_seen,
-    refreshed on every doorbell_human on AND off, even for suppressed runs), so someone
-    lingering on the porch is a single visit. No front-door-open gate (removed at
-    user request). A doorbell press always alerts. phone_ok/tv_ok are decided once
-    at the start; runs that qualify for neither stop immediately; mode parallel so
-    a second detection cannot kill an in-flight clip download.'
+  description: >-
+    Sends one phone notification per visit when Frigate sees a person at the front door or the
+    doorbell is pressed, and pops the live door camera up on the TVs. Flow: snapshot with an
+    unguessable file name, an immediate notification with the photo, then an AI caption
+    (describe_image.py: local Ollama first, Gemini fallback) and a 15-second Frigate clip that
+    replace the notification. A person counts as a new visit only after the porch has been clear
+    for 1 minute, so someone lingering doesn't trigger repeated alerts; pressing the doorbell
+    always alerts. Runs in parallel mode so a second detection can't cancel a clip that is still
+    downloading. See the README for the helpers and shell commands it needs.
   triggers:
   - trigger: state
     entity_id: binary_sensor.doorbell_human
@@ -269,9 +273,10 @@
 
 - id: '1645167860170'
   alias: Doorbell Media Cleanup
-  description: Every night, delete doorbell snapshots older than 30 days and clips older
-    than 48 hours from /config/www (served at /local without login). The clip script also
-    prunes clips, but only when a new clip is saved; this runs even on quiet days.
+  description: >-
+    Nightly at 03:00, deletes doorbell snapshots older than 30 days and clips older than 48
+    hours from /config/www, which Home Assistant serves at /local without login. The clip script
+    also prunes old clips whenever it saves a new one; this catches quiet days.
   triggers:
   - trigger: time
     at: 03:00:00

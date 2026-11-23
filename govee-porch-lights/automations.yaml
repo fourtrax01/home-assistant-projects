@@ -1,6 +1,10 @@
 - id: '1620017652118'
   alias: Sliding Door /Back Porch Light Automation
-  description: ''
+  description: >-
+    Back porch lights at night. Opening the sliding door or a person in the back yard turns the
+    back porch light on at full brightness, plus the grill light if the smoker is heating. Both
+    turn off once the door has been closed and the yard clear for 5 minutes. The wall paddle
+    switch can also turn them on or off by hand. Only runs after sunset.
   triggers:
   - id: slider_open
     trigger: state
@@ -106,10 +110,14 @@
 
 - id: '1749880798946'
   alias: Porch Light Full Smart Control
-  description: Full automation with dusk/dawn, porch activity boost, midnight dim,
-    holiday presets, Christmas rotation, and 5-minute state enforcement. Halloween
-    runs script.porch_halloween_cycle and the WLED "Halloween" playlist (eave playlist
-    chosen at sunset; WLED runs it locally).
+  description: >-
+    The main front-porch light controller for the six Govee wall lights and the WLED eave
+    lights. Sunset turns them on (holiday themes from calendar.holiday_lights_calendar,
+    otherwise warm white); midnight ends effects and dims to the night level; sunrise turns
+    everything off. Every 5 minutes it re-applies the expected state, so a light that rebooted
+    or was changed elsewhere gets corrected. Stands aside while a look is picked by hand
+    (input_select.porch_look) or the wall switch turned the porch off
+    (input_boolean.porch_manual_off).
   triggers:
   - trigger: state
     entity_id: binary_sensor.porch_activity
@@ -785,14 +793,11 @@
 
 - id: '1790560000001'
   alias: Porch Wall Lights - Keep Side Color
-  description: The H7076 porch/walkway wall lights have RGB-only side segments (segment
-    3 = left, 4 = right) that never follow a white/color-temperature setting. Whenever
-    one of the six lights turns on or switches to white (color temp) mode, set its
-    sides to RGB (255,190,75) - tuned 2026-09-27 to match the 4200K top/bottom. Skipped
-    when the light is running a Govee scene/effect, or a holiday is active on the
-    holiday lights calendar (Porch Light Full Smart Control runs holiday effects then).
-    Segment commands go through govee2mqtt (Govee cloud); the triggers use the govee2mqtt
-    LAN entities (Matter dropped 11-22).
+  description: >-
+    The Govee H7076 wall lights have side light bars that are RGB-only and ignore
+    white/color-temperature commands, so in white mode they'd stay on their last color. Whenever
+    a light turns on or switches to white, this sets its sides to a warm RGB color (255,190,75)
+    that matches 4200K. Skipped while a Govee scene/effect or a holiday theme is running.
   triggers:
   - trigger: state
     entity_id:
@@ -869,20 +874,13 @@
 
 - id: '1790560000002'
   alias: Porch Activity - Base White
-  description: 'Only runs while the porch is standard white: skipped during porch
-    cycle/effect scripts, Govee effects or colored looks (user, 2026-10-11). At night,
-    when someone is in the driveway, front yard, on the porch or at the front door
-    (binary_sensor.porch_activity), stop any porch theme/rotation/breathing and put
-    all six porch wall lights on base white (and the WLED eaves, if on, on warm white
-    255,225,140; their preset is restored afterwards): 4200K at full brightness with
-    the warm (255,190,75) sides. 3 s after activity clears (was 1 min; user 2026-11-22:
-    back to the effects right when the cameras are clear; 3 s rides over brief camera
-    gaps), resume what was running: a holiday/cycle script (input_text.porch_activity_resume,
-    with |script.porch_breathe or |script.porch_twinkle if one was running), else
-    the last static look (input_text.porch_current_look), else the holiday calendar''s
-    Govee effect, else normal white at the porch automation''s target brightness.
-    While Porch Follows Eaves is on, the bridge stream is paused during activity (porch
-    + eaves 4200K) and restarted after.'
+  description: >-
+    When someone is in the driveway, front yard, porch or at the door at night
+    (binary_sensor.porch_activity), pauses any porch theme or animation and switches the porch
+    lights (and the eaves, if on) to bright warm white so people can see. A few seconds after
+    the area is clear, it resumes exactly what was running: the holiday cycle script, the last
+    picked look, the holiday effect, or normal white. Skipped while a colored look or effect is
+    playing.
   triggers:
   - trigger: state
     entity_id: binary_sensor.porch_activity
@@ -1228,13 +1226,11 @@
 
 - id: '1790560000003'
   alias: Permanent Lights - Follow Porch Brightness
-  description: 'Keeps the WLED eave lights (light.permanant_lights) at exactly the
-    porch wall light group''s brightness (light.porch_effect_group), 1:1, including
-    the motion boost and the midnight dim. Applied when the porch brightness or target
-    changes, when the eaves turn on, and 2 s after a preset loads (presets carry their
-    own brightness). The 2 s delay with mode restart also debounces the constant changes
-    during twinkle/breathing. Earlier version (replaced at the user''s request): 0.335
-    x target, capped at 50%.'
+  description: >-
+    Keeps the WLED eave lights at the same brightness as the porch wall-light group, including
+    the motion boost and the midnight dim. Applied when either brightness changes, when the
+    eaves turn on, and shortly after a WLED preset loads (presets carry their own brightness).
+    Mode restart plus a 2-second delay debounces the constant changes during animations.
   triggers:
   - alias: Follow the porch group's actual brightness 1:1 (user choice 2026-09-27),
       once it has held for 2 s. Flicker effects (candle, twinkle, breathing) change
@@ -1269,16 +1265,13 @@
 
 - id: '1791700000001'
   alias: Porch Wall Lights - Auto Power-Cycle When Offline
-  description: 'A Govee H7076 porch wall light that drops off Wi-Fi stays offline
-    until its power is cycled. Offline = its UniFi Wi-Fi client is away (UniFi marks
-    away ~5 min after it disconnects) for 1+ min while its switch has been on 4+ min.
-    Then turn that switch off for 6 s (light.carriage = Walkway/Left/Center/Right,
-    switch.porch = Porch, Shelly 1 .107), wait for the lights to rejoin Wi-Fi, restart
-    govee2mqtt if any are still away, then put the porch look back. Skips if all six
-    are away (network/UniFi problem), within 15 min of an HA start, and runs at most
-    once every 30 min. Walk/Porch is breaker-only: see "Porch Wall Lights - Walk/Porch
-    Offline Alert". Switched from Matter unavailable to UniFi trackers 11-22 (Matter
-    being removed from the lights).'
+  description: >-
+    Self-healing for the Govee wall lights: a light that drops off Wi-Fi stays offline until its
+    power is cycled. When a light's UniFi Wi-Fi client has been away for over a minute while its
+    power switch has been on for 4+ minutes, this turns that switch off for 6 seconds, waits for
+    the light to rejoin, restarts the govee2mqtt add-on if needed, then puts the porch look
+    back. Skipped if all six are away (that's a network problem), for 15 minutes after HA
+    starts, and more often than every 30 minutes.
   triggers:
   - trigger: state
     entity_id:
@@ -1394,10 +1387,10 @@
 
 - id: '1791700000002'
   alias: Porch Wall Lights - Walk/Porch Offline Alert
-  description: The Walk/Porch H7076 has no switch, only a breaker, so it can't be
-    power-cycled from HA. Notify when its UniFi Wi-Fi client has been away 10 min
-    (~15 min offline incl. UniFi's 5 min away delay; not right after an HA start,
-    and not when all six are away). Switched from Matter to UniFi 11-22.
+  description: >-
+    One porch light (Walk/Porch) has no smart switch, only a breaker, so it can't be
+    power-cycled automatically. Sends a phone notification when its Wi-Fi client has been away
+    for 10 minutes. Not right after an HA restart, and not when all six lights are away.
   triggers:
   - trigger: state
     entity_id: device_tracker.unifi_default_aa_bb_cc_dd_ee_06
@@ -1422,17 +1415,13 @@
 
 - id: '1792200000001'
   alias: Porch Wall Switch - Toggle Porch and Eave Lights
-  description: The Porch wall switch (Shelly 1 .107, detached; its relay stays on
-    to power the Porch Govee) toggles the outside lights. If any porch wall light
-    (light.porch_effect_group) or the eaves (light.permanant_lights) are on, it stops
-    any running porch theme and turns them all off, and sets input_boolean.porch_manual_off
-    so Porch Light Full Smart Control's 5-minute check doesn't turn them back on.
-    If all are off, it clears the flag, makes sure the Carriage and Porch relays are
-    powering the Govees, and turns the porch on (normal white at the target brightness)
-    and, only during a holiday (holiday lights calendar on), the eaves. Sunrise and
-    sunset clear the flag; it is only set at night. Triggers on either the input's
-    on/off (toggle switch) or a press event (momentary); mode single + 2 s hold so
-    one flip can't toggle twice.
+  description: >-
+    Makes the porch wall switch (a Shelly in detached mode, so its relay keeps the Govee lights
+    powered) a toggle for all the outside lights. If anything is on, it stops any theme and
+    turns the porch lights and eaves off, setting input_boolean.porch_manual_off so the 5-minute
+    check doesn't turn them back on. If everything is off, it turns the porch on in normal white
+    (and the eaves during a holiday). Works with a toggle or a momentary switch; sunrise and
+    sunset clear the manual-off flag.
   triggers:
   - trigger: state
     entity_id: binary_sensor.porch_switch_input
@@ -1566,9 +1555,10 @@
 
 - id: '1792400000001'
   alias: Back Porch Shellys - Auto Power-Cycle When Offline
-  description: If the Back Porch or Grill Light Shelly is unavailable for 5 minutes,
-    cut power with the Leviton D215S relay (Matter light.back_porch_switch) for 10
-    seconds, then restore. At most once per hour.
+  description: >-
+    If the back porch or grill light Shelly goes unavailable for 5 minutes, cuts its power for
+    10 seconds with the Leviton smart switch upstream of it, then restores power. At most once
+    an hour.
   triggers:
   - trigger: state
     entity_id:
@@ -1600,10 +1590,10 @@
 
 - id: '1792400000002'
   alias: Back Porch - Leviton Paddle Follows Shelly Light
-  description: Keeps the Leviton paddle/LED (cloud entity light.back_porch_switch1)
-    matching the Shelly Back Porch light. In Smart Bulb Mode this does not touch the
-    relay (Matter light.back_porch_switch). The Sliding Door automation only reacts
-    to the paddle when it disagrees with the light, so this cannot echo.
+  description: >-
+    Keeps the Leviton wall switch's paddle and LED in sync with the back porch light. The
+    Leviton runs in Smart Bulb Mode, so this doesn't touch its relay; it only updates the
+    indicator.
   triggers:
   - trigger: state
     entity_id: light.back_porch
@@ -1626,10 +1616,10 @@
 
 - id: '1791700000003'
   alias: Porch - Resume Holiday Look After HA Restart
-  description: An HA restart kills the running porch holiday cycle script and nothing
-    restarted it (10-27 Walk/Porch went white). Two minutes after startup, if it is
-    evening (sunset to midnight), the holiday calendar is on and no porch cycle is
-    running, start the holiday's look again.
+  description: >-
+    An HA restart stops any running porch holiday script. Two minutes after HA starts, if it's
+    between sunset and midnight, a holiday is active on the calendar and no porch script is
+    running, this starts the holiday look again.
   triggers:
   - trigger: homeassistant
     event: start
@@ -1704,10 +1694,11 @@
 
 - id: '1794592748940'
   alias: Porch Look - Apply
-  description: Plays the picked input_select.porch_look on the 6 H7076 wall lights
-    over LAN (/config/govee_tools/porch_looks.py). Stops the cloud/Matter porch_*
-    scripts first. Picking Auto by hand stops the look and switches the porch off
-    so the 5-minute check restores the normal/holiday look. Built 2026-11-13.
+  description: >-
+    Plays the look picked in input_select.porch_look (Christmas, Halloween, chases, twinkle and
+    more) on the six Govee wall lights over the local network with porch_looks.py. Stops any
+    other porch script first. Picking Auto turns the porch off so the 5-minute check restores
+    the normal or holiday look.
   triggers:
   - trigger: state
     entity_id: input_select.porch_look
@@ -1785,10 +1776,10 @@
 
 - id: '1794592751729'
   alias: Porch Look - Back to Auto
-  description: 'Ends a picked porch look at midnight (user rule: themes only until
-    the midnight dim), at sunrise, and when the porch wall switch turns the porch
-    off. Sets input_select.porch_look to Auto and stops the LAN looks; the smart control
-    then takes over. Built 2026-11-13.'
+  description: >-
+    Ends a hand-picked porch look at midnight, at sunrise, or when the wall switch turns the
+    porch off, by setting input_select.porch_look back to Auto. The main porch controller then
+    takes over again.
   triggers:
   - trigger: time
     at: 00:00:00
@@ -1825,16 +1816,12 @@
 
 - id: '1794593100212'
   alias: Porch Look - White for Arrivals From the Street
-  description: 'User rule 2026-11-13: while a picked Porch Look plays at night, a
-    person coming IN from the street switches the porch (and since 11-15 the eaves)
-    to bright white; someone leaving the house keeps the colors. 11-15 rewrite: at
-    night the Frigate (Coral) Driveway cam first sees arrivals already inside driveway_inner
-    and only tags driveway_street as it loses them, so zone order cannot tell the
-    direction. Now: the first time a track enters driveway_inner fires, unless someone
-    just came out of the house (front door, doorbell/front-door person, garage entry
-    door or a front garage door in the last 3 min). Coming back in after reaching
-    driveway_street in the same track always fires. Resumes the look 2 min after Frigate''s
-    driveway person occupancy clears.'
+  description: >-
+    While a picked porch look plays at night, someone arriving from the street switches the
+    porch and eaves to bright white; people leaving the house keep the colors. Uses Frigate's
+    MQTT events from the driveway camera's zones: a person entering driveway_inner counts as
+    arriving, unless someone came out of the house in the last 3 minutes (front door, garage
+    doors or a door camera person). The look resumes 2 minutes after the driveway is clear.
   triggers:
   - trigger: mqtt
     topic: frigate_coral/events
@@ -2012,10 +1999,12 @@
 
 - id: '1794600000001'
   alias: Porch Follows Eaves - Apply
-  description: '2026-11-22. Turns the Synology WLED->Govee bridge on/off with input_boolean.porch_follows_eaves.
-    Night only. Off: stop the stream, then restore the normal porch look (night) or
-    turn the porch off (day). Re-sends ''on'' every 5 min and at HA start in case
-    the bridge container restarted (it starts disabled).'
+  description: >-
+    Turns the WLED-to-Govee bridge (see wled-eaves) on and off with
+    input_boolean.porch_follows_eaves, so the porch lights join the eave lights' WLED effects.
+    Night only. Turning it off stops the stream and restores the normal porch look. It re-sends
+    'on' every 5 minutes and when HA starts, because the bridge always starts disabled after a
+    restart.
   triggers:
   - trigger: state
     entity_id: input_boolean.porch_follows_eaves
@@ -2094,10 +2083,10 @@
 
 - id: '1794600000002'
   alias: Porch Follows Eaves - Safety Off
-  description: '2026-11-22. The bridge stream overrides HA''s porch commands (11-22
-    sunrise test: 4 lights ignored ''off''), so turn Porch Follows Eaves off first
-    whenever the porch or eaves should go off: sunrise, eaves off, porch turned off,
-    porch manual off.'
+  description: >-
+    While the bridge is streaming, the porch lights ignore HA's commands, including 'off'. So
+    whenever the porch or eaves should turn off (sunrise, eaves off, porch off, wall-switch
+    manual off), this turns Porch Follows Eaves off first.
   triggers:
   - trigger: sun
     event: sunrise
@@ -2125,18 +2114,12 @@
 
 - id: '1795401452771'
   alias: Porch Govee Scene - Apply
-  description: 'Plays the picked input_select.porch_govee_scene (Govee''s 77 built-in
-    H7076 scenes + custom ones like ''Blue & White'', /config/govee_tools/h7076_effects.json)
-    on all six porch wall lights over LAN: shell_command.porch_look look=govee:<name>
-    (porch_looks.py -> govee_scene.py; remembers the scene in .porch_govee_scene;
-    Right/Center get a head start). At NIGHT the eaves (WLED .201) also twinkle in
-    the scene''s colors (Colortwinkles; their prior state is saved once in .eaves_saved.json);
-    by day the look gets ''__day'' so the eaves are untouched. Then sets input_select.porch_look
-    to ''Govee Scene'' so Smart Control / Keep Side Color leave the lights alone and
-    Porch Look - Apply, arrival restore and resume-after-restart replay it (look govee_scene,
-    eaves included). When Porch Look moves off ''Govee Scene'', the eaves are restored
-    (look eaves_restore: only if they still show the scene twinkle) and this picker
-    resets to ''—''. Built 2026-11-22.'
+  description: >-
+    Plays one of Govee's built-in H7076 scenes (or a custom recolored one) picked in
+    input_select.porch_govee_scene, on all six porch lights over the local network, with no
+    cloud. At night, the WLED eaves also twinkle in the scene's colors, and their previous state
+    is restored afterwards. Sets input_select.porch_look to 'Govee Scene' so the other porch
+    automations leave the lights alone.
   triggers:
   - trigger: state
     entity_id: input_select.porch_govee_scene

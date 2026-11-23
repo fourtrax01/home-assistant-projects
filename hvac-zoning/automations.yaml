@@ -1,10 +1,10 @@
 - id: '1790114057675'
   alias: HVAC Vent Safety Watchdog
-  description: 'Fail-open backstop for anything outside the ESPHome firmware: opens
-    every vent if commissioning ends without cleaning up (script crash, HA restart
-    mid-test) or runs too long, and on HA start whenever zoning is not active. Also:
-    every 5 min, if zoning is active but the controller heartbeat is older than 5
-    min (controller broken/stuck), turns zoning off and opens all vents.'
+  description: >-
+    Fail-open safety backstop for the zoning. Opens every vent: when HA starts while zoning is
+    off, when a commissioning test ends without cleaning up (crash or HA restart mid-test) or
+    runs over 75 minutes, and when zoning is on but the controller hasn't completed a run in 5
+    minutes (it then also turns zoning off). Every case leaves a persistent notification.
   triggers:
   - trigger: homeassistant
     event: start
@@ -108,10 +108,11 @@
 
 - id: '1790127231081'
   alias: HVAC Commissioning - Auto-run Test Matrix
-  description: 'Each cooling cycle, after 4 min of confirmed cooling, runs the commissioning
-    script in ''matrix'' mode: fresh baseline, then every 0/50/100 vent combination
-    not yet in input_text.hvac_commissioning_done (mildest first, all-closed last).
-    The script turns this automation off when all 26 combinations are done.'
+  description: >-
+    One-time commissioning helper. During each cooling cycle, after 4 minutes of confirmed
+    cooling, it runs the commissioning script on the next untested vent combination (0/50/100%
+    for each of the three vents, mildest first, all-closed last) and records the duct static
+    pressure. The script turns this automation off when all 26 combinations are done.
   triggers:
   - trigger: state
     entity_id: binary_sensor.hvac_cooling_confirmed
@@ -142,11 +143,11 @@
 
 - id: '1790214233443'
   alias: HVAC Kids Bath Cap (interim)
-  description: 'Interim until the zoning controller exists: keeps cover.kids_bath_vent
-    at or below input_number.kids_bath_vent_max_open while cooling/idle, and fully
-    open while heating. Stands aside during commissioning, safety override, when the
-    zoning controller is active, and for 30 min after script.hvac_open_all_vents runs
-    (so the emergency button is not immediately undone).'
+  description: >-
+    A simple stand-in for full zoning: keeps the kids' bathroom vent at or below a maximum
+    opening while cooling or idle, and fully open while heating. Stands aside while
+    commissioning, a safety override or the full zoning controller is active, and for 30 minutes
+    after Open All Vents is pressed.
   triggers:
   - trigger: homeassistant
     event: start
@@ -260,16 +261,15 @@
 
 - id: '1790215615440'
   alias: HVAC Zoning Controller
-  description: 'Central upstairs zoning controller. Runs every minute and on key changes
-    while input_boolean.hvac_zoning_active is ON. Decision logic lives in custom_templates/hvac_zoning.jinja
-    (macro hvac_plan): safety (sensor failure / pressure / coil) > recovery hold >
-    heating (all open) > idle (hold, then neutral) > master priority (input_boolean.hvac_day_sleep
-    on and evening mode off: bath shut, kids shut until master + allowance, staged:
-    bath closed -> cooler kid throttled -> both kids) > kids east/west balance with
-    bath at cap. Anti-hunting: closing moves need the vent''s dwell time; opening
-    moves are always allowed. All limits are input_number helpers on the HVAC Zoning
-    dashboard. Fan balancing (input_boolean.hvac_fan_balance_running, AC idle): kids
-    vents open to at least input_number.hvac_fan_balance_min_open.'
+  description: >-
+    The zoning controller. Every minute (and on relevant changes) while
+    input_boolean.hvac_zoning_active is on, it asks custom_templates/hvac_zoning.jinja for a
+    plan and moves the three vents. Priority order: safety (any sensor unavailable or
+    implausible, duct pressure over the hard limit, supply air too cold or delta-T too high
+    opens every vent) > recovery hold > heating (all open) > idle > master-bedroom priority
+    during daytime sleep > balancing the two kids' rooms. To prevent hunting, a vent may only
+    close further after its dwell time; opening is always allowed. All limits are input_number
+    helpers.
   triggers:
   - trigger: time_pattern
     minutes: /1
@@ -465,9 +465,9 @@
 
 - id: '1790215700449'
   alias: HVAC Zoning Disabled - Open Vents
-  description: When input_boolean.hvac_zoning_active is turned off, command every
-    vent open, clear the safety override, and mark the controller DISABLED. The interim
-    kids-bath cap automation re-applies the bath cap 30 min later.
+  description: >-
+    When zoning is switched off, opens every vent, clears the safety override and marks the
+    controller DISABLED.
   triggers:
   - trigger: state
     entity_id: input_boolean.hvac_zoning_active
@@ -508,16 +508,12 @@
 
 - id: '1790299232095'
   alias: HVAC Cooling Rate Logger
-  description: 'Learning data for vent positions: measures how fast each room cools
-    during each segment of a cooling cycle at fixed vent positions. A segment opens
-    3 min after cooling is confirmed and closes when cooling stops or any vent''s
-    requested position changes (a new segment then opens). Segments of 6-90 min are
-    written to input_text.hvac_cooling_segment_last (its history is the dataset, 30-day
-    recorder) and the logbook as pipe-separated fields: start | minutes | pos bath/kid2/kid1
-    % | kid2 rate | kid1 rate | master rate | start temps kid2/kid1/master | supply
-    2-min avg F | outdoor F | doors open (a/v/m) | zoning state. Rates are F dropped
-    per 10 min (positive = cooling). Plain text on purpose: a JSON string would be
-    parsed into a dict by HA''s native template types.'
+  description: >-
+    Collects data for tuning the vents. For each stretch of a cooling cycle with fixed vent
+    positions (6-90 minutes), it logs how fast each bedroom cooled (F per 10 minutes) together
+    with the vent positions, supply-air and outdoor temperature, which doors were open and the
+    zoning state. Each record is written as pipe-separated text to
+    input_text.hvac_cooling_segment_last, whose history is the dataset, and to the logbook.
   triggers:
   - trigger: state
     entity_id: binary_sensor.hvac_cooling_confirmed
@@ -617,19 +613,12 @@
 
 - id: '1790301022866'
   alias: HVAC Evening Handoff
-  description: 'Gets the kids'' rooms comfortable before their 8:30 PM bedtime. At
-    input_datetime.hvac_evening_start (6 PM), or from input_datetime.hvac_evening_early_start
-    (5 PM) if either kid room is input_number.hvac_evening_early_start_gap (3F) or
-    more warmer than the master: turns on input_boolean.hvac_evening_mode (the zoning
-    controller then skips master priority) and, if the upstairs Ecobee is in Day Sleep
-    or Home, switches it to Sleep (74F, Master+Kid 2+Kid 1 sensors). Not resume_program:
-    the schedule''s Home is 76F, warmer than Day Sleep''s 74F, which would stop cooling
-    right when the kids need it. The Sleep hold ends at the 8 PM schedule change,
-    which goes to Sleep anyway. Away presets and manual temperature holds are left
-    alone. Also clears input_boolean.hvac_day_sleep (ends master priority). Evening
-    mode resets at 05:00 (clock time; the user''s sleep can be at any time, but day
-    sleep usually starts 9-10 AM after 6 AM shifts). While evening mode is off, a
-    bed-on counts as day sleep (Day Sleep preset + hvac_day_sleep).'
+  description: >-
+    Gets the kids' rooms cool before bedtime. At input_datetime.hvac_evening_start (or earlier,
+    if a kid's room is a set amount warmer than the master), turns on evening mode, which ends
+    master-bedroom priority in the zoning controller, and switches the thermostat to its Sleep
+    comfort setting if it's in Day Sleep or Home. Away presets and manual holds are left alone.
+    Evening mode resets at 05:00.
   triggers:
   - trigger: time
     at: input_datetime.hvac_evening_start
@@ -738,11 +727,10 @@
 
 - id: '1790876119281'
   alias: HVAC Commissioning - Auto-run Post-ECM Retest
-  description: 'Each cooling cycle, after 4 min of confirmed cooling, runs the commissioning
-    script in ''retest'' mode: fresh baseline, then every retest step not yet in input_text.hvac_retest_done
-    (each vent alone at 20/15/10/5/0%, then all 20, bath 0 + kids 20, bath 0 + 20/5,
-    bath 0 + 5/20, all closed). The script turns this automation off when all 20 are
-    done. Needs zoning OFF.'
+  description: >-
+    Second commissioning pass after a blower motor change. During each cooling cycle it runs the
+    next retest step (each vent alone at 20/15/10/5/0%, then a set of combinations), recording
+    static pressure, and turns itself off when all 20 steps are done. Requires zoning to be off.
   triggers:
   - trigger: state
     entity_id: binary_sensor.hvac_cooling_confirmed
@@ -773,10 +761,10 @@
 
 - id: '1790967661719'
   alias: HVAC Filter Change Alert
-  description: 'Phone alert when the upstairs return filter''s pressure drop stays
-    above input_number.hvac_filter_change_threshold for 15 min of steady cooling.
-    At most once per 7 days. Baseline: MERV 11 read ~0.15 inH2O on 2026-10-02 (2 months
-    old); a MERV 8 will start lower, so lower the threshold after a changeout if needed.'
+  description: >-
+    Phone alert when the return filter's pressure drop stays above
+    input_number.hvac_filter_change_threshold for 15 minutes of steady cooling. At most once a
+    week. Tune the threshold to your filter; a new filter reads much lower than a loaded one.
   triggers:
   - trigger: numeric_state
     entity_id: sensor.delta_t_pressure_node_ac_filter_pressure_drop
@@ -804,20 +792,13 @@
 
 - id: '1791404849606'
   alias: HVAC Fan Circulation Balance
-  description: 'Upstairs only. When the AC has been idle for 30+ min (binary_sensor.hvac_cooling_confirmed
-    off; 2026-10-09 - runs squeezed between cooling cycles never balanced anything)
-    and the bedrooms drift apart (sensor.hvac_bedroom_temp_spread = warmest minus
-    coolest of master/Kid 2/Kid 1 >= input_number.hvac_fan_balance_start_spread),
-    run the blower (climate.upstairs_hk fan_mode on, low speed) to mix the air. Stops
-    (fan back to auto) when the spread is under 1.0 F, after 45 min, when the AC starts
-    cooling/heating, when disabled, or when the ducts ADD heat (delta-T 2-min avg
-    below -1.5 F after 5 min = supply warmer than return, e.g. hot attic ducts) -
-    that last case locks out for 2 h. Normal stops start a 20-min cooldown (timer.hvac_fan_balance_lockout).
-    Only resets the fan it turned on itself (input_boolean.hvac_fan_balance_running).
-    Master switch: input_boolean.hvac_fan_balance_enabled. Attic above 115 F = never
-    start. Also stops after 5 min if the supply 2-min avg is warmer than the bedroom
-    mean (sensor.hvac_bedroom_temp_mean) - the return picks up attic heat (return
-    tracks attic temp, r=0.97) - and locks out 1 h (2026-10-09).'
+  description: >-
+    Evens out bedroom temperatures between cooling cycles. When the AC has been idle for 30+
+    minutes and the warmest and coolest bedrooms differ by a set amount, runs the thermostat fan
+    on low to mix the air. Stops when the rooms are within 1 F, after 45 minutes, when the AC
+    starts, or when the ducts are adding heat (hot-attic ducts make the supply air warmer than
+    the room), which also locks it out for a while. Never starts with the attic above 115 F, and
+    only switches off a fan it turned on itself.
   triggers:
   - trigger: time_pattern
     minutes: /2
